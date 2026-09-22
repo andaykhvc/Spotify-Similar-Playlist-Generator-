@@ -1,0 +1,107 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f5f5f0;
+  --foreground: #171714;
+  --muted: #6d6d65;
+  --panel: rgba(255, 255, 252, 0.82);
+  --panel-strong: #ffffff;
+  --line: rgba(23, 23, 20, 0.11);
+  --accent: #1ed760;
+  --accent-strong: #159447;
+  --accent-ink: #092b16;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #10110f;
+    --foreground: #f5f5ef;
+    --muted: #a4a49b;
+    --panel: rgba(28, 29, 26, 0.82);
+    --panel-strong: #1b1c19;
+    --line: rgba(255, 255, 255, 0.11);
+    --accent: #1ed760;
+    --accent-strong: #43e57c;
+    --accent-ink: #071d0e;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background: var(--background);
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  color: var(--foreground);
+  background:
+    radial-gradient(circle at 8% 0%, rgba(30, 215, 96, 0.12), transparent 28rem),
+    radial-gradient(circle at 92% 14%, rgba(96, 99, 255, 0.09), transparent 30rem),
+    var(--background);
+  font-family: Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: 3px;
+}
+
+::selection {
+  color: #06170c;
+  background: #71ed9d;
+}
+
+.surface {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.07);
+  backdrop-filter: blur(18px);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--foreground) 7%, transparent) 25%,
+    color-mix(in srgb, var(--foreground) 13%, transparent) 50%,
+    color-mix(in srgb, var(--foreground) 7%, transparent) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite linear;
+}
+
+@keyframes shimmer {
+  to {
+    background-position-x: -200%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
