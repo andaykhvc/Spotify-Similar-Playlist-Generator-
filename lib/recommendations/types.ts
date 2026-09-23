@@ -17,6 +17,7 @@ export interface RecommendationCandidate {
   providerRank: number;
   providerScore: number | null;
   seedGroupIndex: number;
+  origin?: "recommendation" | "source-artist";
 }
 
 export interface RecommendationProviderRequest {
@@ -24,6 +25,18 @@ export interface RecommendationProviderRequest {
   desiredCount: PlaylistLength;
   generationVariant: number;
   candidateLimit?: number;
+  strictness?: "strict" | "balanced" | "exploratory";
+  featureTargets?: {
+    tempo: number | null;
+    energy: number | null;
+    danceability: number | null;
+    valence: number | null;
+    acousticness: number | null;
+    instrumentalness: number | null;
+    speechiness: number | null;
+  };
+  includeSourceArtistCatalog?: boolean;
+  sourceArtistLimit?: number;
 }
 
 export interface RecommendationProvider {

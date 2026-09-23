@@ -2,6 +2,9 @@ import { mapWithConcurrency } from "@/lib/recommendations/concurrency";
 import { artistTitleKey, excludeSourceCandidates } from "@/lib/recommendations/dedupe";
 import { allocateClusterQuotas } from "@/lib/recommendations/engine/allocation";
 import type { PlaylistProfile } from "@/lib/recommendations/engine/playlist-profile";
+import { quantile } from "@/lib/recommendations/features/normalization";
+import type { ProviderFeatures } from "@/lib/recommendations/features/types";
+import type { ConsensusStrictness } from "@/lib/recommendations/scoring/candidate-score";
 import { runRecommendationProviders } from "@/lib/recommendations/providers";
 import { ENGINE_LIMITS } from "@/lib/recommendations/recommendation-config";
 import type { PlaylistLength, ProviderName, RankedCandidate, RecommendationCandidate, RecommendationProvider } from "@/lib/recommendations/types";
@@ -11,6 +14,7 @@ export interface CandidateEvidence extends RankedCandidate {
   seedClusterIds: number[];
   seedTrackIds: string[];
   providerRanks: Partial<Record<ProviderName, number>>;
+  sourceArtistCatalog: boolean;
 }
 
 function identityKeys(candidate: RecommendationCandidate): string[] {
@@ -39,6 +43,7 @@ export function unionCandidateEvidence(
         seedClusterIds: [clusterId],
         seedTrackIds,
         providerRanks: { [candidate.provider]: candidate.providerRank },
+        sourceArtistCatalog: candidate.origin === "source-artist",
       };
       const next = union.push(item) - 1;
       keys.forEach((key) => keyToIndex.set(key, next));
@@ -49,6 +54,7 @@ export function unionCandidateEvidence(
     if (!item.seedClusterIds.includes(clusterId)) item.seedClusterIds.push(clusterId);
     for (const id of seedTrackIds) if (!item.seedTrackIds.includes(id)) item.seedTrackIds.push(id);
     item.providerRanks[candidate.provider] = Math.min(item.providerRanks[candidate.provider] ?? Infinity, candidate.providerRank);
+    item.sourceArtistCatalog ||= candidate.origin === "source-artist";
     if (!item.spotifyId && candidate.spotifyId) item.spotifyId = candidate.spotifyId;
     if (!item.isrc && candidate.isrc) item.isrc = candidate.isrc;
     item.providerCount = item.generatedBy.length;
@@ -58,7 +64,8 @@ export function unionCandidateEvidence(
   return union.map((candidate) => ({
     ...candidate,
     rankScore: 60 - Math.min(...Object.values(candidate.providerRanks)) +
-      (candidate.generatedBy.length - 1) * 12 + (candidate.seedClusterIds.length - 1) * 5,
+      (candidate.generatedBy.length - 1) * 12 + (candidate.seedClusterIds.length - 1) * 5 +
+      (candidate.sourceArtistCatalog ? 10 : 0),
   })).sort((a, b) => b.rankScore - a.rankScore || a.name.localeCompare(b.name));
 }
 
@@ -85,17 +92,31 @@ export function capCandidatesAcrossClusters(candidates: CandidateEvidence[], clu
   return selected;
 }
 
+function reccoMedian(
+  profile: PlaylistProfile, members: number[], field: keyof Pick<ProviderFeatures,
+    "tempo" | "energy" | "danceability" | "valence" | "acousticness" | "instrumentalness" | "speechiness">,
+): number | null {
+  const values = members.flatMap((index) => {
+    const value = profile.records[index].reccobeats?.raw[field];
+    return typeof value === "number" ? [value] : [];
+  });
+  return values.length ? quantile(values, 0.5) : null;
+}
+
 export async function generateClusterCandidates(
   profile: PlaylistProfile,
   providers: RecommendationProvider[],
   desiredCount: PlaylistLength,
   generationVariant: number,
+  strictness: ConsensusStrictness = "strict",
 ): Promise<{
   candidates: CandidateEvidence[];
   successes: ProviderName[];
   failures: { provider: string; status: number; retryAfterSeconds: number | null }[];
 }> {
   const quotas = allocateClusterQuotas(profile.clusters.map((cluster) => cluster.weight), desiredCount);
+  const sourceArtistLimit = providers.some((provider) => provider.name === "freqblog")
+    ? 1 : Math.min(3, Math.max(1, Math.floor(12 / profile.clusters.length)));
   const results = await mapWithConcurrency(profile.clusters, 2, async (cluster) => {
     const representatives = cluster.medoidIndices.map((index) => profile.records[index].identity);
     const rotation = representatives.length ? generationVariant % representatives.length : 0;
@@ -104,6 +125,18 @@ export async function generateClusterCandidates(
     const candidateLimit = Math.min(40, Math.max(12, (quotas[cluster.id] ?? 1) * 3 + generationVariant % 3 * 3));
     const result = await runRecommendationProviders(providers, {
       seedGroups: [seeds], desiredCount, generationVariant, candidateLimit,
+      strictness,
+      includeSourceArtistCatalog: true,
+      sourceArtistLimit,
+      featureTargets: {
+        tempo: reccoMedian(profile, cluster.memberIndices, "tempo"),
+        energy: reccoMedian(profile, cluster.memberIndices, "energy"),
+        danceability: reccoMedian(profile, cluster.memberIndices, "danceability"),
+        valence: reccoMedian(profile, cluster.memberIndices, "valence"),
+        acousticness: reccoMedian(profile, cluster.memberIndices, "acousticness"),
+        instrumentalness: reccoMedian(profile, cluster.memberIndices, "instrumentalness"),
+        speechiness: reccoMedian(profile, cluster.memberIndices, "speechiness"),
+      },
     });
     return { clusterId: cluster.id, seeds, result };
   });

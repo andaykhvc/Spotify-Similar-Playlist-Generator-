@@ -168,8 +168,8 @@ export class FreqBlogProvider implements RecommendationProvider, FeatureLookupPr
       url.searchParams.set("artist", seed.artists[0]);
     }
     url.searchParams.set("limit", String(Math.min(100, request.candidateLimit ?? Math.max(20, request.desiredCount))));
-    url.searchParams.set("exclude_seed_artists", "true");
-    url.searchParams.set("cross_genre", "auto");
+    url.searchParams.set("exclude_seed_artists", "false");
+    url.searchParams.set("cross_genre", request.strictness === "strict" ? "strict" : "auto");
     const body = await fetchProviderJson(
       this.name,
       url,

@@ -1,4 +1,4 @@
-export const RECOMMENDATION_ENGINE_VERSION = "consensus-v1";
+export const RECOMMENDATION_ENGINE_VERSION = "consensus-v2";
 export const DEFAULT_CONSENSUS_STRICTNESS = "strict" as const;
 
 // Tunable engineering defaults, not empirically calibrated music-quality scores.
@@ -29,18 +29,19 @@ export const CONSENSUS_WEIGHTS = {
 } as const;
 
 export const RANKING_WEIGHTS = {
-  clusterFit: 0.58,
-  providerAgreement: 0.2,
-  generationEvidence: 0.09,
-  genreFit: 0.05,
-  moodFit: 0.04,
-  harmonicFit: 0.04,
+  clusterFit: 0.53,
+  providerAgreement: 0.12,
+  generationEvidence: 0.07,
+  genreFit: 0.08,
+  moodFit: 0.02,
+  harmonicFit: 0.02,
+  artistFit: 0.16,
 } as const;
 
 export const STRICTNESS = {
-  strict: { bothRadius: 1.05, oneRadius: 0.7, maxSingleViewShare: 0.1 },
-  balanced: { bothRadius: 1.5, oneRadius: 1.15, maxSingleViewShare: 0.3 },
-  exploratory: { bothRadius: 2.1, oneRadius: 1.55, maxSingleViewShare: 0.45 },
+  strict: { bothRadius: 1.05, oneRadius: 1.05, maxSingleViewShare: 0.1 },
+  balanced: { bothRadius: 1.4, oneRadius: 1.35, maxSingleViewShare: 0.3 },
+  exploratory: { bothRadius: 1.8, oneRadius: 1.65, maxSingleViewShare: 0.45 },
 } as const;
 
 export const ENGINE_LIMITS = {

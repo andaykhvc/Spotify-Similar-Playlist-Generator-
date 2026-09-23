@@ -122,7 +122,7 @@ export async function generateSimilarPlaylist(
     throw new RecommendationError("Bu listenin müzikal grupları belirlenemedi.", 422, "no_matches");
   }
   const providers = freq ? [recco, freq] : [recco];
-  const pool = await generateClusterCandidates(profile, providers, desiredCount, generationVariant);
+  const pool = await generateClusterCandidates(profile, providers, desiredCount, generationVariant, strictness);
   console.info("[recommendations] candidate_generation", {
     clusterCount: profile.clusters.length,
     candidateCount: pool.candidates.length,
@@ -164,6 +164,14 @@ export async function generateSimilarPlaylist(
     scales, profile, strictness,
   ));
   const accepted = evaluations.filter((item) => item.accepted);
+  console.info("[recommendations] candidate_evaluation", {
+    resolvedCount: safeResolved.length,
+    acceptedCount: accepted.length,
+    rejectionCounts: evaluations.reduce<Record<string, number>>((counts, item) => {
+      if (item.rejectionReason) counts[item.rejectionReason] = (counts[item.rejectionReason] ?? 0) + 1;
+      return counts;
+    }, {}),
+  });
   const actualDualAvailability = reccoSource.size > 0 && freqSource.size > 0 &&
     reccoCandidates.size > 0 && freqCandidates.size > 0;
   const selected = selectAllocatedCandidates(
@@ -178,7 +186,10 @@ export async function generateSimilarPlaylist(
     actualDualAvailability ? STRICTNESS[strictness].maxSingleViewShare : 1,
   );
   if (selected.length === 0) {
-    throw new RecommendationError("Öneriler kaynak listenin müzikal gruplarıyla yeterince uyuşmadı.", 422, "no_matches");
+    throw new RecommendationError(
+      "Bu listede güvenilir biçimde benzer parça bulunamadı. Alakasız şarkılar eklenmedi; başka bir kaynak liste deneyin.",
+      422, "no_matches",
+    );
   }
   const recommendations = selected.map((item, index) => ({
     ...item.track,
