@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { excludeSourceAndDedupeCandidates, normalizeTrackText } from "@/lib/recommendations/dedupe";
 import { RecommendationError, ProviderError } from "@/lib/recommendations/errors";
-import { generateCandidatePool } from "@/lib/recommendations";
+import { generateSimilarPlaylist } from "@/lib/recommendations";
 import { runRecommendationProviders } from "@/lib/recommendations/providers";
 import { enforceArtistDiversity, labelAndLimitRecommendations, rankCandidates } from "@/lib/recommendations/ranking";
 import { batchSeeds, selectRepresentativeSeeds } from "@/lib/recommendations/seeds";
@@ -116,14 +116,12 @@ describe("provider orchestration", () => {
   });
 
   it("does not call a provider when the compliance feature flag is off", async () => {
-    const provider: RecommendationProvider = {
-      name: "reccobeats",
-      recommend: vi.fn().mockResolvedValue([]),
-    };
-    await expect(generateCandidatePool([track(1)], {
-      desiredCount: 20,
-      generationVariant: 0,
-    }, [provider], false)).rejects.toBeInstanceOf(RecommendationError);
-    expect(provider.recommend).not.toHaveBeenCalled();
+    vi.stubEnv("EXTERNAL_RECOMMENDER_ENABLED", "false");
+    const fetcher = vi.spyOn(globalThis, "fetch");
+    await expect(generateSimilarPlaylist("1234567890123456789012", 20, 0))
+      .rejects.toBeInstanceOf(RecommendationError);
+    expect(fetcher).not.toHaveBeenCalled();
+    fetcher.mockRestore();
+    vi.unstubAllEnvs();
   });
 });

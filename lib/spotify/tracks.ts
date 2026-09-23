@@ -59,6 +59,28 @@ async function resolveCandidate(candidate: RankedCandidate): Promise<NormalizedT
   return results.find((track) => isConservativeSpotifyMatch(candidate, track)) ?? null;
 }
 
+export async function resolveRankedCandidatesToSpotify<T extends RankedCandidate>(
+  candidates: T[],
+  limit: number,
+): Promise<{ candidate: T; track: NormalizedTrack }[]> {
+  const cache = new Map<string, Promise<NormalizedTrack | null>>();
+  const selected = candidates.slice(0, limit);
+  const results = await mapWithConcurrency(selected, 4, async (candidate) => {
+    const key = candidate.spotifyId ? `id:${candidate.spotifyId}`
+      : candidate.isrc ? `isrc:${candidate.isrc.toUpperCase()}`
+        : `text:${artistTitleKey(candidate.name, candidate.artists)}`;
+    const pending = cache.get(key) ?? resolveCandidate(candidate);
+    cache.set(key, pending);
+    return { candidate, track: await pending };
+  });
+  const seen = new Set<string>();
+  return results.filter((result): result is { candidate: T; track: NormalizedTrack } => {
+    if (!result.track || seen.has(result.track.spotifyId)) return false;
+    seen.add(result.track.spotifyId);
+    return true;
+  });
+}
+
 export async function resolveRecommendationsToSpotify(
   candidates: RankedCandidate[],
   maximumToResolve: number,

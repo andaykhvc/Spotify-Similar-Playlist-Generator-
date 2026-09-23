@@ -1,5 +1,5 @@
 import { apiErrorResponse, privateJsonResponse } from "@/lib/api";
-import { generateSimilarPlaylist, isPlaylistLength } from "@/lib/recommendations";
+import { generateSimilarPlaylist, isConsensusStrictness, isPlaylistLength } from "@/lib/recommendations";
 import { RecommendationError } from "@/lib/recommendations/errors";
 import { hasValidRequestOrigin } from "@/lib/request";
 import { getSpotifySession } from "@/lib/session";
@@ -28,6 +28,7 @@ export async function POST(request: Request) {
     const playlistId = typeof body.playlistId === "string" ? body.playlistId : "";
     const desiredCount = body.desiredCount;
     const generationVariant = body.generationVariant;
+    const strictness = body.strictness === undefined ? "balanced" : body.strictness;
     if (
       !PLAYLIST_ID.test(playlistId) ||
       !isPlaylistLength(desiredCount) ||
@@ -35,6 +36,7 @@ export async function POST(request: Request) {
       typeof generationVariant !== "number" ||
       generationVariant < 0 ||
       generationVariant > 10_000
+      || !isConsensusStrictness(strictness)
     ) {
       throw new RecommendationError(
         "Çalma listesi veya üretim ayarları geçersiz.",
@@ -42,7 +44,7 @@ export async function POST(request: Request) {
         "invalid_request",
       );
     }
-    const result = await generateSimilarPlaylist(playlistId, desiredCount, generationVariant);
+    const result = await generateSimilarPlaylist(playlistId, desiredCount, generationVariant, strictness);
     return privateJsonResponse(result);
   } catch (error) {
     if (error instanceof SyntaxError) {
