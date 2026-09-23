@@ -8,6 +8,7 @@ import type {
   PlaylistLength,
   RecommendationGenerationResult,
 } from "@/lib/recommendations/types";
+import type { ConsensusStrictness } from "@/lib/recommendations/scoring/candidate-score";
 
 interface ApiErrorBody {
   error?: { code?: string; message?: string };
@@ -40,6 +41,7 @@ async function responseError(response: Response, fallback: string): Promise<stri
 
 export function SimilarPlaylistClient({ playlistId }: { playlistId: string }) {
   const [desiredCount, setDesiredCount] = useState<PlaylistLength>(30);
+  const [strictness, setStrictness] = useState<ConsensusStrictness>("balanced");
   const [generationVariant, setGenerationVariant] = useState(0);
   const [result, setResult] = useState<RecommendationGenerationResult | null>(null);
   const [tracks, setTracks] = useState<GeneratedRecommendation[]>([]);
@@ -51,7 +53,7 @@ export function SimilarPlaylistClient({ playlistId }: { playlistId: string }) {
   const [saveResult, setSaveResult] = useState<SaveResult | null>(null);
   const initialRequestStarted = useRef(false);
 
-  const generate = useCallback(async (count: PlaylistLength, variant: number) => {
+  const generate = useCallback(async (count: PlaylistLength, variant: number, mode: ConsensusStrictness) => {
     setIsGenerating(true);
     setError(null);
     setSaveResult(null);
@@ -59,7 +61,7 @@ export function SimilarPlaylistClient({ playlistId }: { playlistId: string }) {
       const response = await fetch("/api/recommendations/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ playlistId, desiredCount: count, generationVariant: variant }),
+        body: JSON.stringify({ playlistId, desiredCount: count, generationVariant: variant, strictness: mode }),
       });
       if (!response.ok) {
         throw new Error(await responseError(response, "Benzer şarkılar bulunamadı."));
@@ -80,13 +82,13 @@ export function SimilarPlaylistClient({ playlistId }: { playlistId: string }) {
   useEffect(() => {
     if (initialRequestStarted.current) return;
     initialRequestStarted.current = true;
-    void generate(30, 0);
+    void generate(30, 0, "balanced");
   }, [generate]);
 
   function regenerate() {
     const nextVariant = generationVariant + 1;
     setGenerationVariant(nextVariant);
-    void generate(desiredCount, nextVariant);
+    void generate(desiredCount, nextVariant, strictness);
   }
 
   async function savePlaylist() {
@@ -122,8 +124,9 @@ export function SimilarPlaylistClient({ playlistId }: { playlistId: string }) {
       <section className="mx-auto flex min-h-[65vh] max-w-xl items-center py-12 text-center" aria-live="polite" aria-busy="true">
         <div className="surface w-full rounded-[2rem] p-8 sm:p-12">
           <span aria-hidden="true" className="mx-auto grid size-16 animate-pulse place-items-center rounded-full bg-[var(--accent)] text-2xl text-[var(--accent-ink)]">≋</span>
-          <h1 className="mt-7 text-3xl font-semibold tracking-tight">Benzer tınıdaki şarkılar bulunuyor…</h1>
-          <p className="mt-3 text-[var(--muted)]">Kaynak listenin tamamından temsilî parçalar seçiliyor.</p>
+          <h1 className="mt-7 text-3xl font-semibold tracking-tight">Çalma listen analiz ediliyor…</h1>
+          <p className="mt-3 text-[var(--muted)]">Ses özellikleri, müzikal gruplar ve yeni şarkılar değerlendiriliyor.</p>
+          <p className="mt-5 text-sm leading-7 text-[var(--muted)]">Liste okunuyor → ses özellikleri inceleniyor → müzikal gruplar bulunuyor → öneri kaynakları karşılaştırılıyor → yeni şarkılar seçiliyor</p>
         </div>
       </section>
     );
@@ -137,7 +140,7 @@ export function SimilarPlaylistClient({ playlistId }: { playlistId: string }) {
           <h1 className="mt-6 text-3xl font-semibold">Öneriler hazırlanamadı</h1>
           <p className="mt-4 leading-7 text-[var(--muted)]">{error}</p>
           <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
-            <button type="button" onClick={() => void generate(desiredCount, generationVariant)} className="rounded-full bg-[var(--foreground)] px-6 py-3 font-bold text-[var(--background)]">Tekrar dene</button>
+            <button type="button" onClick={() => void generate(desiredCount, generationVariant, strictness)} className="rounded-full bg-[var(--foreground)] px-6 py-3 font-bold text-[var(--background)]">Tekrar dene</button>
             <Link href={`/playlist/${encodeURIComponent(playlistId)}`} className="rounded-full border border-[var(--line)] px-6 py-3 font-bold">Kaynak listeye dön</Link>
           </div>
         </div>
@@ -152,11 +155,22 @@ export function SimilarPlaylistClient({ playlistId }: { playlistId: string }) {
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--muted)]">Yeni keşif listesi</p>
           <h1 className="mt-3 text-balance text-4xl font-semibold tracking-[-0.04em] sm:text-6xl">“{result.playlistName}” listesine benzer</h1>
-          <p className="mt-4 text-[var(--muted)]">{tracks.length} doğrulanmış Spotify parçası</p>
+          <p className="mt-4 text-[var(--muted)]">{tracks.length} doğrulanmış Spotify parçası
+            {result.analysis ? ` · Kaynak listede ${result.analysis.groupCount} müzikal grup bulundu` : ""}
+          </p>
         </div>
         <button type="button" onClick={regenerate} className="min-h-12 rounded-full border border-[var(--line)] px-6 font-bold hover:bg-[var(--panel)]">Yeniden oluştur</button>
       </section>
 
+      {result.analysis && (
+        <div className="mt-6 flex flex-wrap gap-2" aria-label="Kaynak listenin müzikal grupları">
+          {result.analysis.groups.map((group) => (
+            <span key={group.id} className="rounded-full border border-[var(--line)] px-3 py-1.5 text-xs font-semibold text-[var(--muted)]">
+              {group.description} · %{group.percentage}
+            </span>
+          ))}
+        </div>
+      )}
       <section className="surface mt-8 flex flex-col gap-5 rounded-3xl p-5 sm:flex-row sm:items-center sm:justify-between">
         <fieldset>
           <legend className="text-sm font-semibold">Liste uzunluğu</legend>
@@ -174,6 +188,14 @@ export function SimilarPlaylistClient({ playlistId }: { playlistId: string }) {
             ))}
           </div>
         </fieldset>
+        <label className="text-sm font-semibold">
+          Keşif düzeyi
+          <select value={strictness} onChange={(event) => setStrictness(event.target.value as ConsensusStrictness)} className="mt-2 min-h-11 w-full rounded-xl border border-[var(--line)] bg-[var(--panel-strong)] px-4 text-[var(--foreground)]">
+            <option value="strict">Yakın</option>
+            <option value="balanced">Dengeli</option>
+            <option value="exploratory">Keşif</option>
+          </select>
+        </label>
         <button type="button" onClick={regenerate} className="min-h-11 rounded-full bg-[var(--accent)] px-5 font-bold text-[var(--accent-ink)]">Bu uzunlukta oluştur</button>
       </section>
 
@@ -195,6 +217,7 @@ export function SimilarPlaylistClient({ playlistId }: { playlistId: string }) {
               <div className="min-w-0">
                 <a href={track.externalUrl} target="_blank" rel="noreferrer" className="block truncate font-semibold hover:underline">{track.name}</a>
                 <p className="mt-1 truncate text-sm text-[var(--muted)]">{track.artists.join(", ")}</p>
+                {track.explanation && <p className="mt-1 truncate text-xs text-[var(--muted)]">{track.explanation}</p>}
               </div>
               <span className="hidden rounded-full border border-[var(--line)] px-3 py-1 text-xs font-semibold text-[var(--muted)] sm:inline-flex">{friendlyLabel(track.matchLabel)}</span>
               <button type="button" onClick={() => setTracks((current) => current.filter((item) => item.spotifyId !== track.spotifyId))} aria-label={`${track.name} parçasını kaldır`} className="grid size-10 place-items-center rounded-full text-xl text-[var(--muted)] hover:bg-red-400/10 hover:text-red-500">×</button>

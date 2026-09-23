@@ -23,6 +23,7 @@ export interface RecommendationProviderRequest {
   seedGroups: NormalizedTrack[][];
   desiredCount: PlaylistLength;
   generationVariant: number;
+  candidateLimit?: number;
 }
 
 export interface RecommendationProvider {
@@ -38,6 +39,8 @@ export interface RankedCandidate extends RecommendationCandidate {
 
 export interface GeneratedRecommendation extends NormalizedTrack {
   matchLabel: MatchLabel;
+  explanation?: string;
+  clusterId?: number;
 }
 
 export interface RecommendationGenerationResult {
@@ -47,4 +50,9 @@ export interface RecommendationGenerationResult {
   generationToken: string;
   desiredCount: PlaylistLength;
   generationVariant: number;
+  analysis?: {
+    groupCount: number;
+    groups: { id: number; description: string; percentage: number }[];
+    providerCoverage: { dual: number; reccoOnly: number; freqOnly: number; unresolved: number };
+  };
 }

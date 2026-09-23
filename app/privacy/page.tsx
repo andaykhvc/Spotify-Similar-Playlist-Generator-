@@ -18,7 +18,7 @@ export default function PrivacyPage() {
         </section>
         <section>
           <h2 className="text-xl font-semibold text-[var(--foreground)]">Dış öneri sağlayıcıları</h2>
-          <p className="mt-2">Sunucu yöneticisi dış öneri özelliğini etkinleştirirse, temsilî Spotify parça kimlikleri ReccoBeats&apos;e; FreqBlog anahtarı yapılandırılmışsa tek bir temsilî parçanın adı ve sanatçısı FreqBlog&apos;a gönderilebilir. Özellik kapalıyken Spotify kaynaklı hiçbir veri bu sağlayıcılara gönderilmez.</p>
+          <p className="mt-2">Sunucu yöneticisi dış öneri özelliğini etkinleştirirse, seçilen listedeki kullanılabilir parçaların kimlikleri ReccoBeats&apos;e; FreqBlog anahtarı yapılandırılmışsa ISRC veya parça adı ve sanatçısı FreqBlog&apos;a ses özelliği analizi için gönderilir. Her müzikal grubun temsilî parçalarıyla öneri istenir; öneri adaylarının kimlikleri ve gerektiğinde ad/sanatçı bilgileri de iki sağlayıcıda özellik kontrolünden geçebilir. Özellik kapalıyken Spotify kaynaklı hiçbir veri bu sağlayıcılara gönderilmez.</p>
         </section>
         <section>
           <h2 className="text-xl font-semibold text-[var(--foreground)]">Bağlantıyı kesme</h2>

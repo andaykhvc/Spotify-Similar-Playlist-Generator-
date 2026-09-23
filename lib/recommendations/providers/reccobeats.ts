@@ -1,6 +1,10 @@
 import { mapWithConcurrency } from "@/lib/recommendations/concurrency";
 import { ProviderError } from "@/lib/recommendations/errors";
 import { fetchProviderJson } from "@/lib/recommendations/providers/http";
+import { ENGINE_LIMITS } from "@/lib/recommendations/recommendation-config";
+import { emptyFeatures, type FeatureLookupProvider, type ProviderFeatures } from "@/lib/recommendations/features/types";
+import { RequestFeatureCache } from "@/lib/recommendations/cache/feature-cache";
+import type { NormalizedTrack } from "@/lib/spotify/types";
 import type {
   RecommendationCandidate,
   RecommendationProvider,
@@ -65,12 +69,76 @@ function parseResponse(value: unknown, seedGroupIndex: number): RecommendationCa
   });
 }
 
-export class ReccoBeatsProvider implements RecommendationProvider {
+function numberIn(value: unknown, lower: number, upper: number): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= lower && value <= upper ? value : null;
+}
+
+export function parseReccoFeatures(value: unknown): ProviderFeatures | null {
+  const item = record(value);
+  if (!item) return null;
+  const features = {
+    ...emptyFeatures("reccobeats-v1-audio-features"),
+    tempo: numberIn(item.tempo, 30, 300),
+    energy: numberIn(item.energy, 0, 1),
+    danceability: numberIn(item.danceability, 0, 1),
+    valence: numberIn(item.valence, 0, 1),
+    loudness: numberIn(item.loudness, -80, 10),
+    acousticness: numberIn(item.acousticness, 0, 1),
+    instrumentalness: numberIn(item.instrumentalness, 0, 1),
+    speechiness: numberIn(item.speechiness, 0, 1),
+    liveness: numberIn(item.liveness, 0, 1),
+    pitchClass: numberIn(item.key, 0, 11),
+    mode: item.mode === 0 || item.mode === 1 ? item.mode : null,
+    providerTrackId: stringValue(item.id),
+  } satisfies ProviderFeatures;
+  return [features.tempo, features.energy, features.danceability, features.valence,
+    features.acousticness, features.loudness].some((field) => field !== null) ? features : null;
+}
+
+export class ReccoBeatsProvider implements RecommendationProvider, FeatureLookupProvider {
   readonly name = "reccobeats" as const;
+  private readonly featureCache = new RequestFeatureCache();
+  private readonly schemaVersion = "v1-audio-features";
+  lastFeatureError: ProviderError | null = null;
   constructor(private readonly fetcher: typeof fetch = fetch) {}
 
+  async lookupFeatures(tracks: NormalizedTrack[]): Promise<Map<string, ProviderFeatures>> {
+    const unique = [...new Map(tracks.map((track) => [track.spotifyId, track])).values()];
+    const missing = unique.filter((track) => !this.featureCache.has(this.name, this.schemaVersion, track.spotifyId));
+    const batches: NormalizedTrack[][] = [];
+    for (let index = 0; index < missing.length; index += ENGINE_LIMITS.reccoBatch) {
+      batches.push(missing.slice(index, index + ENGINE_LIMITS.reccoBatch));
+    }
+    let rateLimited = false;
+    await mapWithConcurrency(batches, 2, async (batch) => {
+      if (rateLimited) return;
+      try {
+      const url = new URL("/v1/audio-features", BASE_URL);
+      batch.forEach((track) => url.searchParams.append("ids", track.spotifyId));
+      const payload = record(await fetchProviderJson(this.name, url, { headers: { Accept: "application/json" } }, this.fetcher, 15_000));
+      if (!payload || !Array.isArray(payload.content)) throw new ProviderError("Invalid ReccoBeats audio features", this.name, 502);
+      const byId = new Map<string, ProviderFeatures>();
+      for (const raw of payload.content) {
+        const item = record(raw);
+        const href = stringValue(item?.href);
+        const id = spotifyIdFromHref(href);
+        const features = parseReccoFeatures(item);
+        if (id && features) byId.set(id, features);
+      }
+      for (const track of batch) this.featureCache.set(this.name, this.schemaVersion, track.spotifyId, byId.get(track.spotifyId) ?? null);
+      } catch (error) {
+        this.lastFeatureError = error instanceof ProviderError ? error : new ProviderError("ReccoBeats feature batch failed", this.name, 503);
+        if (this.lastFeatureError.status === 429) rateLimited = true;
+      }
+    });
+    return new Map(unique.flatMap((track) => {
+      const features = this.featureCache.get(this.name, this.schemaVersion, track.spotifyId);
+      return features ? [[track.spotifyId, features]] : [];
+    }));
+  }
+
   async recommend(request: RecommendationProviderRequest): Promise<RecommendationCandidate[]> {
-    const perGroup = Math.min(
+    const perGroup = request.candidateLimit ?? Math.min(
       40,
       Math.max(10, Math.ceil((request.desiredCount * 1.6) / request.seedGroups.length)),
     );
