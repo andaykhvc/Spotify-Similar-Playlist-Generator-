@@ -74,6 +74,8 @@ Candidates are resolved to real Spotify tracks with bounded concurrency and Spot
 | Balanced | 1.50 | 1.15 | 30% |
 | Exploratory | 2.10 | 1.55 | 45% |
 
+The consumer UI starts in **Strict (Yakın)** mode. It applies the tightest source-cluster boundary and can return fewer tracks when the qualifying pool is small; users can choose Balanced or Exploratory and regenerate. The production API uses the same default if a caller omits the mode.
+
 When only one provider is available, the single-view share cap is relaxed; the radius ceiling still applies. No candidate is accepted with zero comparable views. The strongest acceptable cluster assignment wins. `Regenerate` changes the deterministic medoid subset and bounded candidate request size; it makes new provider requests and can surface next qualifying candidates rather than shuffling old results.
 
 The explainable score is:

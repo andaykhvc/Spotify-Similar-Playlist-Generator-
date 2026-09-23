@@ -9,6 +9,7 @@ import type {
   RecommendationGenerationResult,
 } from "@/lib/recommendations/types";
 import type { ConsensusStrictness } from "@/lib/recommendations/scoring/candidate-score";
+import { DEFAULT_CONSENSUS_STRICTNESS } from "@/lib/recommendations/recommendation-config";
 
 interface ApiErrorBody {
   error?: { code?: string; message?: string };
@@ -23,6 +24,47 @@ interface SaveResult {
 }
 
 const LENGTHS: PlaylistLength[] = [20, 30, 50, 100];
+const EXPLORATION_LEVELS: { value: ConsensusStrictness; label: string; description: string }[] = [
+  { value: "strict", label: "Yakın", description: "Kaynak listedeki müzikal gruplara en sıkı eşleşmeyi arar. Daha az şarkı çıkabilir." },
+  { value: "balanced", label: "Dengeli", description: "Benzerliği korurken biraz daha geniş bir şarkı havuzunu değerlendirir." },
+  { value: "exploratory", label: "Keşif", description: "Uyum sınırını daha fazla esnetir; farklı ama ilişkili şarkılara yer açar." },
+];
+
+export function ExplorationLevelPicker({
+  value,
+  onChange,
+}: {
+  value: ConsensusStrictness;
+  onChange: (value: ConsensusStrictness) => void;
+}) {
+  return (
+    <fieldset>
+      <legend className="text-sm font-semibold">Keşif düzeyi</legend>
+      <p className="mt-2 text-sm leading-6 text-[var(--muted)]">Yeni şarkıların kaynak listenin ses özelliklerine ne kadar yakın olacağını belirler.</p>
+      <div className="mt-4 grid gap-3 md:grid-cols-3">
+        {EXPLORATION_LEVELS.map((level) => (
+          <label
+            key={level.value}
+            className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 transition focus-within:ring-2 focus-within:ring-[var(--accent)] ${value === level.value ? "border-[var(--accent)] bg-[var(--panel-strong)]" : "border-[var(--line)] hover:border-[var(--foreground)]"}`}
+          >
+            <input
+              type="radio"
+              name="exploration-level"
+              value={level.value}
+              checked={value === level.value}
+              onChange={() => onChange(level.value)}
+              className="mt-1 size-4 shrink-0 accent-[var(--accent-strong)]"
+            />
+            <span>
+              <span className="block font-semibold">{level.label}</span>
+              <span className="mt-1 block text-sm leading-5 text-[var(--muted)]">{level.description}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
 
 function friendlyLabel(label: GeneratedRecommendation["matchLabel"]): string {
   if (label === "Strong match") return "Güçlü eşleşme";
@@ -41,7 +83,7 @@ async function responseError(response: Response, fallback: string): Promise<stri
 
 export function SimilarPlaylistClient({ playlistId }: { playlistId: string }) {
   const [desiredCount, setDesiredCount] = useState<PlaylistLength>(30);
-  const [strictness, setStrictness] = useState<ConsensusStrictness>("balanced");
+  const [strictness, setStrictness] = useState<ConsensusStrictness>(DEFAULT_CONSENSUS_STRICTNESS);
   const [generationVariant, setGenerationVariant] = useState(0);
   const [result, setResult] = useState<RecommendationGenerationResult | null>(null);
   const [tracks, setTracks] = useState<GeneratedRecommendation[]>([]);
@@ -82,7 +124,7 @@ export function SimilarPlaylistClient({ playlistId }: { playlistId: string }) {
   useEffect(() => {
     if (initialRequestStarted.current) return;
     initialRequestStarted.current = true;
-    void generate(30, 0, "balanced");
+    void generate(30, 0, DEFAULT_CONSENSUS_STRICTNESS);
   }, [generate]);
 
   function regenerate() {
@@ -134,13 +176,16 @@ export function SimilarPlaylistClient({ playlistId }: { playlistId: string }) {
 
   if (!result) {
     return (
-      <section className="mx-auto flex min-h-[65vh] max-w-xl items-center py-12 text-center">
+      <section className="mx-auto flex min-h-[65vh] max-w-4xl items-center py-12 text-center">
         <div className="surface w-full rounded-[2rem] p-8 sm:p-12">
           <span aria-hidden="true" className="mx-auto grid size-14 place-items-center rounded-full bg-amber-400/15 text-2xl">!</span>
           <h1 className="mt-6 text-3xl font-semibold">Öneriler hazırlanamadı</h1>
           <p className="mt-4 leading-7 text-[var(--muted)]">{error}</p>
+          <div className="mt-7 text-left">
+            <ExplorationLevelPicker value={strictness} onChange={setStrictness} />
+          </div>
           <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
-            <button type="button" onClick={() => void generate(desiredCount, generationVariant, strictness)} className="rounded-full bg-[var(--foreground)] px-6 py-3 font-bold text-[var(--background)]">Tekrar dene</button>
+            <button type="button" onClick={() => void generate(desiredCount, generationVariant, strictness)} className="rounded-full bg-[var(--foreground)] px-6 py-3 font-bold text-[var(--background)]">Seçili düzeyde tekrar dene</button>
             <Link href={`/playlist/${encodeURIComponent(playlistId)}`} className="rounded-full border border-[var(--line)] px-6 py-3 font-bold">Kaynak listeye dön</Link>
           </div>
         </div>
@@ -171,7 +216,7 @@ export function SimilarPlaylistClient({ playlistId }: { playlistId: string }) {
           ))}
         </div>
       )}
-      <section className="surface mt-8 flex flex-col gap-5 rounded-3xl p-5 sm:flex-row sm:items-center sm:justify-between">
+      <section className="surface mt-8 rounded-3xl p-5 sm:p-6">
         <fieldset>
           <legend className="text-sm font-semibold">Liste uzunluğu</legend>
           <div className="mt-3 flex flex-wrap gap-2">
@@ -188,15 +233,13 @@ export function SimilarPlaylistClient({ playlistId }: { playlistId: string }) {
             ))}
           </div>
         </fieldset>
-        <label className="text-sm font-semibold">
-          Keşif düzeyi
-          <select value={strictness} onChange={(event) => setStrictness(event.target.value as ConsensusStrictness)} className="mt-2 min-h-11 w-full rounded-xl border border-[var(--line)] bg-[var(--panel-strong)] px-4 text-[var(--foreground)]">
-            <option value="strict">Yakın</option>
-            <option value="balanced">Dengeli</option>
-            <option value="exploratory">Keşif</option>
-          </select>
-        </label>
-        <button type="button" onClick={regenerate} className="min-h-11 rounded-full bg-[var(--accent)] px-5 font-bold text-[var(--accent-ink)]">Bu uzunlukta oluştur</button>
+        <div className="mt-7">
+          <ExplorationLevelPicker value={strictness} onChange={setStrictness} />
+        </div>
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-[var(--muted)]">Düzeyi değiştirince yeni öneriler için yeniden oluştur.</p>
+          <button type="button" onClick={regenerate} className="min-h-11 rounded-full bg-[var(--accent)] px-5 font-bold text-[var(--accent-ink)]">Seçili ayarlarla yeniden oluştur</button>
+        </div>
       </section>
 
       {error && <p role="alert" className="mt-6 rounded-2xl border border-red-400/30 bg-red-400/10 p-4 text-sm">{error}</p>}

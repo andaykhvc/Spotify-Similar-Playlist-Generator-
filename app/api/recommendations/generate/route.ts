@@ -1,6 +1,7 @@
 import { apiErrorResponse, privateJsonResponse } from "@/lib/api";
 import { generateSimilarPlaylist, isConsensusStrictness, isPlaylistLength } from "@/lib/recommendations";
 import { RecommendationError } from "@/lib/recommendations/errors";
+import { DEFAULT_CONSENSUS_STRICTNESS } from "@/lib/recommendations/recommendation-config";
 import { hasValidRequestOrigin } from "@/lib/request";
 import { getSpotifySession } from "@/lib/session";
 
@@ -28,7 +29,7 @@ export async function POST(request: Request) {
     const playlistId = typeof body.playlistId === "string" ? body.playlistId : "";
     const desiredCount = body.desiredCount;
     const generationVariant = body.generationVariant;
-    const strictness = body.strictness === undefined ? "balanced" : body.strictness;
+    const strictness = body.strictness === undefined ? DEFAULT_CONSENSUS_STRICTNESS : body.strictness;
     if (
       !PLAYLIST_ID.test(playlistId) ||
       !isPlaylistLength(desiredCount) ||
