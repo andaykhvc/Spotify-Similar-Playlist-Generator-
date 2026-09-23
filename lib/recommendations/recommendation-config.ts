@@ -1,4 +1,4 @@
-export const RECOMMENDATION_ENGINE_VERSION = "consensus-v2";
+export const RECOMMENDATION_ENGINE_VERSION = "consensus-v3";
 export const DEFAULT_CONSENSUS_STRICTNESS = "strict" as const;
 
 // Tunable engineering defaults, not empirically calibrated music-quality scores.

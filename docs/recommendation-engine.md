@@ -1,4 +1,4 @@
-# Recommendation engine · `consensus-v2`
+# Recommendation engine · `consensus-v3`
 
 This document describes the implemented engine, its verified provider capabilities, engineering defaults, and limits. It does not claim that the numerical weights are scientifically optimal or that structural metrics equal human judgments of music quality.
 
@@ -13,8 +13,8 @@ flowchart TD
   F --> G
   G --> H[Consensus clusters and mixture weights]
   H --> I[Medoid seeds per cluster]
-  I --> J[Target-audio Recco, source-artist catalogue, and Freq candidate union]
-  J --> K[Spotify identity resolution]
+  I --> J[Target-audio Recco and source-artist catalogue candidates]
+  J --> K[Validated Spotify track IDs, no Spotify search]
   K --> L[Candidate features in both provider spaces]
   L --> M[Nearest-source radius, style-evidence admission, and explainable score]
   M --> N[Quota allocation and diversity]
@@ -42,7 +42,7 @@ The implementation was checked against the current official [ReccoBeats audio-fe
 
 FreqBlog response fields may be sparse for fallback catalogue layers. Its `feature_source` distinguishes analysis provenance. `bpm_confidence` is not treated as 0–1. ReccoBeats key and mode are documented and therefore used. No undocumented Recco genre, mood, Camelot, or time signature values are inferred.
 
-Recommendation endpoints used: ReccoBeats `GET /v1/track/recommendation` with 1–5 Spotify track IDs, `size`, documented target-audio parameters, and `featureWeight`; `GET /v1/track/{id}` and `GET /v1/artist/{id}/track` supply a bounded same-source-artist candidate pool. FreqBlog `GET /recommendations` uses 1–5 numeric catalogue IDs in `seed_tracks` when `/bulk` resolved them, otherwise one medoid title/artist, plus `limit`, `exclude_seed_artists=false`, and `cross_genre=strict` in Yakın mode (`auto` otherwise). FreqBlog `/similar` and the embedding endpoint are not used. Its documented cosine `score` is retained as provider evidence but is not presented as a user similarity percentage.
+Recommendation endpoints used: ReccoBeats `GET /v1/track/recommendation` with 1–5 Spotify track IDs, `size`, documented target-audio parameters, and `featureWeight`; `GET /v1/track/{id}` and `GET /v1/artist/{id}/track` supply a bounded same-source-artist candidate pool. FreqBlog `POST /bulk` is used for source/candidate feature enrichment only. FreqBlog's recommendation results contain iTunes IDs, not guaranteed Spotify IDs; the app does not call Spotify Search to map them. FreqBlog `/similar` and the embedding endpoint are not used.
 
 ## Data flow and canonical record
 
@@ -64,9 +64,9 @@ Each cluster stores source members, mixture weight, up to five medoid indices, p
 
 ## Candidate generation, admission and ranking
 
-The engine allocates a target count across source clusters by the largest-remainder method. Each cluster generates its own candidates from rotating medoid subsets: one Recco request with Recco-specific cluster-median audio targets, up to three source-artist catalogue lookups, and, when configured, one Freq recommendation request. The number of clusters is capped at eight; artist catalogue lookups are capped at twelve per request (one per cluster when Freq is configured) and request-scoped cached. A provider failure is local to that provider/cluster; successful batches survive. Candidate lists are a **union**, deduplicated by Spotify ID, ISRC, then normalized artist/title while preserving versions such as remix and live.
+The engine allocates a target count across source clusters by the largest-remainder method. Each cluster generates candidates from rotating medoid subsets: one Recco request with Recco-specific cluster-median audio targets and up to three source-artist catalogue lookups. The number of clusters is capped at eight; artist catalogue lookups are capped at twelve per request and request-scoped cached. Candidate lists are a **union**, deduplicated by Spotify ID, ISRC, then normalized artist/title while preserving versions such as remix and live.
 
-Candidates are resolved to real Spotify tracks with bounded concurrency and Spotify Search's current 10-result limit. Each unique resolved track is feature-enriched in both configured provider spaces. For each consensus cluster, candidate-to-nearest-source-track distances are computed independently, then divided by that cluster's provider-specific leave-one-out radius. A candidate is accepted according to actual radius thresholds in one of three modes:
+Candidates must already contain a Spotify track ID parsed server-side from a validated `https://open.spotify.com/track/{id}` provider URL. Candidates without it are dropped. No Spotify `/search`, `/tracks/{id}`, or removed bulk `/tracks` endpoint is called during candidate processing. The preview uses provider title/artist/duration and a canonical Spotify link, so album art is unavailable there. Each unique candidate is feature-enriched in both configured provider spaces. For each consensus cluster, candidate-to-nearest-source-track distances are computed independently, then divided by that cluster's provider-specific leave-one-out radius. A candidate is accepted according to actual radius thresholds in one of three modes:
 
 | Mode | Both view radius ceiling | One view ceiling | Max single-view share when both views exist |
 | --- | ---: | ---: | ---: |
@@ -96,14 +96,14 @@ The final selection first fills each cluster's target quota with accepted candid
 
 ## Cache, quota, privacy and limits
 
-The `RequestFeatureCache` key is `(provider, schema version, stable track identifier)` and lives only for one generation request. It does not contain a Spotify user ID or playlist ID, and there is no persistent database. Recco lookups use at most 40 IDs per call; Freq bulk requests use 25 items, below the documented 50-item maximum to reduce partial time-box responses. Feature batch concurrency is at most two; Freq candidate and Recco candidate calls are bounded by eight clusters. Provider 429 honors `Retry-After` with at most one short automatic retry; subsequent batches stop on quota errors. Freq `202`, queued, and processing entries are treated as pending without indefinite polling.
+The `RequestFeatureCache` key is `(provider, schema version, stable track identifier)` and lives only for one generation request. It does not contain a Spotify user ID or playlist ID, and there is no persistent database. Recco lookups use at most 40 IDs per call; Freq bulk requests use 25 items, below the documented 50-item maximum to reduce partial time-box responses. Feature batch concurrency is at most two; Recco candidate calls are bounded by eight clusters. Provider 429 honors `Retry-After` with at most one short automatic retry; subsequent batches stop on quota errors. Freq `202`, queued, and processing entries are treated as pending without indefinite polling.
 
 `EXTERNAL_RECOMMENDER_ENABLED=false` stops the pipeline before any provider transfer. Turning it on requires the deployment operator's own Spotify policy and provider data-processing review. FreqBlog is optional: without a key, genre metadata is usually absent and the engine conservatively favors tracks from source artists, so a result may be shorter or less varied. The engine does not train a model, scrape Spotify audio, store listening profiles, or claim to recreate Spotify's historical algorithm.
 
-The interactive safety limit is 1,000 usable source tracks and 240 unique candidates per request. Catalogue coverage, FreqBlog free-tier quota, source cluster tightness, and Spotify Search ambiguity can all reduce result count. The metrics are engineering diagnostics rather than subjective quality scores.
+The interactive safety limit is 1,000 usable source tracks and 240 unique candidates per request. Catalogue coverage, FreqBlog free-tier quota, source cluster tightness, and the requirement for a provider-supplied Spotify ID can all reduce result count. The metrics are engineering diagnostics rather than subjective quality scores.
 
 ## Development diagnostics and tuning
 
 With a connected Spotify session in `next dev`, visit `/dev/recommender-lab` and provide a playlist ID. This route and its API return 404 in production. The lab shows source raw values and missingness, provider and consensus assignments, medoids, feature coverage, candidate provenance, distances, score components, rejections, and result mixture. It makes real provider calls only when the external recommender feature flag is on. Never use a real network call in automated unit tests.
 
-Useful parameters to tune after real playlist listening tests are the feature weights, provider reliability, cluster-count penalty, radius floors, strictness ceilings, candidate pool size, and artist concentration adjustment. The current engine version is `consensus-v2`; change it whenever a scoring or clustering contract changes so diagnostics from different versions are not conflated.
+Useful parameters to tune after real playlist listening tests are the feature weights, provider reliability, cluster-count penalty, radius floors, strictness ceilings, candidate pool size, and artist concentration adjustment. The current engine version is `consensus-v3`; change it whenever a scoring or clustering contract changes so diagnostics from different versions are not conflated.

@@ -10,9 +10,9 @@ EchoList, Spotify'ın eski “Create Similar Playlist” akışının yararlı k
 - Hesaptan seçim veya Spotify playlist URL/ID yapıştırma
 - Her kullanılabilir kaynak parça için ReccoBeats ve opsiyonel FreqBlog ses özelliği sorgusu
 - Sağlayıcı başına ayrı normalizasyon ve deterministik medoid kümeleme; iki görünümden co-association uzlaşması
-- Her müzikal grubun temsilî parçalarından hedef ses özellikli aday üretimi, kaynak sanatçı kataloğu ve çapraz sağlayıcı özellik kontrolü
+- Her müzikal grubun temsilî parçalarından hedef ses özellikli ReccoBeats aday üretimi, kaynak sanatçı kataloğu ve opsiyonel FreqBlog özellik kontrolü
 - Kaynak parça eleme, Spotify ID → ISRC → normalize sanatçı/başlık sıralı deduplikasyon
-- Spotify'da exact ID, ISRC veya konservatif sanatçı/başlık eşlemesi
+- Öneri adaylarında yalnızca sağlayıcının doğrulanabilir Spotify parça bağlantısından çıkarılan ID; Spotify Search kullanılmaz
 - Kaynak grubun yarıçapına göre gerçek Yakın/Dengeli/Keşif eşikleri; Yakın başlangıçta seçili, açıklanabilir puan ve uydurma yüzde yok
 - Grup oranlarını koruyan kota dağıtımı, uyarlanabilir sanatçı/albüm sınırı, 20/30/50/100 hedef uzunlukları, parça kaldırma ve gerçek yeniden üretim
 - Yalnızca geliştirme ortamında, oturum gerektiren `/dev/recommender-lab` tanı ekranı
@@ -53,7 +53,7 @@ Spotify metadata'sı ve sağlayıcı sonuçları tek istek boyunca bellekte işl
 
 Kaynak parçalar tekilleştirilir ve tamamı için mevcut sağlayıcılardan özellik istenir. ReccoBeats ve FreqBlog değerleri birbirine ham olarak eklenmez veya ortalanmaz. Her sağlayıcı kendi medyan/IQR ölçeğinde ve eksik değeri açıkça koruyarak deterministik k-medoids ile gruplanır. İki kümelemenin parça çiftleri hakkındaki uzlaşması müzikal grupları oluşturur. FreqBlog yoksa veya örtüşme azsa tek-sağlayıcı fallback'i açıkça işaretlenir.
 
-Her grubun temsilî parçaları ve grubun medyan ses özellikleriyle sınırlı sayıda sağlayıcı isteği yapılır. ReccoBeats'teki kaynak sanatçıların diğer parçaları da aday havuzuna katılır. Birleşik havuz Spotify'da doğrulanır, sağlayıcı görünümünde tekrar zenginleştirilir ve grubun gerçek kaynak parçalarıyla karşılaştırılır. Kabul için aynı kaynak sanatçı veya eşleşen tür ailesi kanıtı gerekir; tür ailesi açıkça uyuşmuyorsa parça elenir. Böylece sırf tempo/enerji yakın diye alakasız türlerden şarkı eklenmez. “Yeniden oluştur” seed alt kümesini ve aday isteğini değiştirir. Yeterince güvenilir aday yoksa istenen sayıdan az sonuç döner; kaliteyi düşürüp listeyi zorla doldurmaz. Bu Spotify'ın özel öneri algoritmasının aynısı değildir. Ayrıntılar: [öneri motoru teknik belgesi](docs/recommendation-engine.md).
+Her grubun temsilî parçaları ve grubun medyan ses özellikleriyle sınırlı sayıda sağlayıcı isteği yapılır. ReccoBeats'teki kaynak sanatçıların diğer parçaları da aday havuzuna katılır. Yalnızca doğrulanabilir Spotify parça bağlantısı taşıyan adaylar alınır; öneri aşamasında Spotify Search veya tek tek parça metadata sorguları yapılmaz. Adaylar mevcut sağlayıcı özellikleriyle kaynak parçalarla karşılaştırılır. Kabul için aynı kaynak sanatçı veya eşleşen tür ailesi kanıtı gerekir; tür ailesi açıkça uyuşmuyorsa parça elenir. “Yeniden oluştur” seed alt kümesini ve aday isteğini değiştirir. Yeterince güvenilir aday yoksa istenen sayıdan az sonuç döner. Öneri önizlemesinde albüm kapakları bulunmayabilir; Spotify'da kaydedilen liste yine gerçek Spotify parça URI'lerini kullanır. Bu Spotify'ın özel öneri algoritmasının aynısı değildir. Ayrıntılar: [öneri motoru teknik belgesi](docs/recommendation-engine.md).
 
 ## Harici sağlayıcı ve Spotify politika sınırı
 
@@ -66,11 +66,11 @@ Kullanılan harici endpoint'ler:
 - ReccoBeats: `GET https://api.reccobeats.com/v1/audio-features`, `GET /v1/track/recommendation`, `GET /v1/track/{id}` ve `GET /v1/artist/{id}/track`
   - Özellik sorguları en çok 40 ID'lik batch'ler; grup başına 1–5 Spotify Base-62 medoid seed ID, medyan özellik hedefleri ve grup başına en çok üç kaynak sanatçı kataloğu sorgusu (istek genelinde en çok 12)
   - HTTP 429'da `Retry-After` gözetilir; en fazla bir kısa otomatik tekrar yapılır
-- FreqBlog (yalnızca `FREQBLOG_API_KEY` varsa): `POST https://api.freqblog.com/bulk` ve `GET /recommendations`
-  - Özellik sorguları en çok 25'lik batch'ler; çözümlenmiş katalog ID'leri varsa grup başına en çok 5 seed
-  - `202`/backfill bekleyen parçalar kullanılabilir diğer verilerle devam eder; `/similar` kullanılmaz
+- FreqBlog (yalnızca `FREQBLOG_API_KEY` varsa): `POST https://api.freqblog.com/bulk`
+  - Özellik sorguları en çok 25'lik batch'ler; tür ve ikinci ses özelliği görünümü adayları filtrelemek/sıralamak için kullanılır
+  - FreqBlog iTunes kimlikli önerilerini Spotify Search ile eşlemek yerine aday olarak kullanmayız; `202`/backfill bekleyen parçalar mevcut verilerle devam eder
 
-FreqBlog başarısız olsa bile ReccoBeats sonucu kullanılabilir. ReccoBeats başarısız olur ve FreqBlog kullanılabilir durumdaysa FreqBlog fallback olabilir. İki sağlayıcı da başarısızsa kullanıcıya geçici servis hatası gösterilir.
+FreqBlog başarısız olsa bile ReccoBeats sonucu kullanılabilir. ReccoBeats aday üretimi başarısızsa Spotify kimliği güvenilir biçimde elde edilemeyen FreqBlog önerileriyle liste doldurulmaz; kullanıcıya geçici servis hatası gösterilir.
 
 `FREQBLOG_API_KEY` olmadan tür verisi genellikle bulunmaz. Bu durumda kalite koruması için özellikle kaynak sanatçıların henüz listede olmayan şarkılarına öncelik verilir; farklı sanatçılar arasındaki keşif daha sınırlı ve sonuç listesi daha kısa olabilir. Anahtar eklemek tür bilgisi ve ikinci bağımsız özellik görünümü sağlar, fakat tek başına Spotify düzeyinde sonuç garantisi vermez. Harici servis kotaları ve veri kapsaması da sonucu etkiler.
 
@@ -114,7 +114,7 @@ cp .env.example .env.local
 | `APP_URL` | Evet | Uygulama origin'i, sonda `/` olmadan |
 | `SESSION_SECRET` | Evet | En az 32 bayt güçlü rastgele sır |
 | `EXTERNAL_RECOMMENDER_ENABLED` | Evet | Harici öneri aktarımını açıkça açan/kapatılan compliance kapısı |
-| `FREQBLOG_API_KEY` | Hayır | Varsa FreqBlog özellik görünümü ve aday üretimini etkinleştirir |
+| `FREQBLOG_API_KEY` | Hayır | Varsa FreqBlog tür ve ses özelliği görünümünü etkinleştirir; Spotify Search gerektiren aday üretiminde kullanılmaz |
 
 Güçlü session secret:
 
@@ -130,7 +130,7 @@ Gerçek sırları repoya commit etmeyin. `NEXT_PUBLIC_` önekli hiçbir sır kul
 - En fazla 5 allowlist kullanıcısı yetkilendirilebilir.
 - Kota developer hesabı düzeyinde paylaşılır.
 - Playlist içerikleri yalnızca giriş yapan kullanıcının sahibi olduğu veya birlikte düzenlediği listelerde okunabilir; takip edilen başka listeler `403` döndürebilir.
-- Search sonuç limiti en fazla 10'dur; eşleme katmanı bu sınırı kullanır.
+- Öneri üretimi Spotify Search kullanmaz; 2026 Development Mode'da kaldırılan toplu track endpoint'ine de dayanmaz.
 
 Uygulama bu sınırları atlatmaz. Okunamayan listeler devre dışı gösterilir, `403` açıklanır ve mimari Extended Quota Mode'a daha sonra geçişle uyumludur. Hizmetin sınırsız genel Spotify kullanıcılarını desteklediği iddia edilmez.
 
@@ -161,7 +161,7 @@ Unit testler gerçek Spotify, ReccoBeats veya FreqBlog ağına çıkmaz; HTTP sa
 1. `GET /api/auth/spotify/login` → Spotify onay sayfası
 2. `GET /api/auth/spotify/callback` → state/PKCE doğrulama ve şifreli oturum
 3. `GET /me`, `GET /me/playlists`, `GET /playlists/{id}/items` → kaynak doğrulama
-4. `POST /api/recommendations/generate` → bütün kaynak parçaların özellikleri, bağımsız sağlayıcı kümeleri, uzlaşma profili, grup başına aday, Spotify eşleme, çapraz özellik kabulü ve sıralama
+4. `POST /api/recommendations/generate` → bütün kaynak parçaların özellikleri, bağımsız sağlayıcı kümeleri, uzlaşma profili, Spotify ID taşıyan adaylar, çapraz özellik kabulü ve sıralama (Spotify Search yok)
 5. `POST /api/spotify/playlists/create-similar` → yeni liste ve seçili parçalar
 6. Spotify: `POST /me/playlists`, ardından 100'lük gruplarla `POST /playlists/{id}/items`
 
@@ -170,7 +170,7 @@ Orijinal kaynak liste hiçbir zaman değiştirilmez.
 ## Resmi kaynaklar
 
 - [Spotify February 2026 migration guide](https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide)
-- [Spotify Search](https://developer.spotify.com/documentation/web-api/reference/search)
+- [Spotify February 2026 API changelog](https://developer.spotify.com/documentation/web-api/references/changes/february-2026)
 - [Spotify Add Items to Playlist](https://developer.spotify.com/documentation/web-api/reference/add-items-to-playlist)
 - [Spotify quota modes](https://developer.spotify.com/documentation/web-api/concepts/quota-modes)
 - [ReccoBeats recommendation API](https://reccobeats.com/docs/apis/get-recommendation)

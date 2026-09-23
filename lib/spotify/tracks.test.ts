@@ -1,41 +1,47 @@
 import { describe, expect, it } from "vitest";
-import { isConservativeSpotifyMatch } from "@/lib/spotify/tracks";
-import type { NormalizedTrack } from "@/lib/spotify/types";
+import { resolveRankedCandidatesToSpotify } from "@/lib/spotify/tracks";
+import type { RankedCandidate } from "@/lib/recommendations/types";
 
-const spotifyTrack: NormalizedTrack = {
-  spotifyId: "1234567890123456789012",
-  spotifyUri: "spotify:track:1234567890123456789012",
-  name: "A Song (feat. Guest)",
-  artists: ["The Band"],
-  album: "Album",
-  imageUrl: null,
-  externalUrl: "https://open.spotify.com/track/1234567890123456789012",
-  isrc: "ABC123",
-  durationMs: 180_000,
-};
+function candidate(overrides: Partial<RankedCandidate> = {}): RankedCandidate {
+  return {
+    provider: "reccobeats",
+    providerTrackId: "provider-track",
+    spotifyId: "1234567890123456789012",
+    name: "A Song",
+    artists: ["The Band"],
+    isrc: "ABC123",
+    durationMs: 180_000,
+    externalUrl: "https://example.invalid/untrusted",
+    providerRank: 1,
+    providerScore: null,
+    seedGroupIndex: 0,
+    rankScore: 1,
+    providerCount: 1,
+    seedGroupCount: 1,
+    ...overrides,
+  };
+}
 
-describe("Spotify candidate matching", () => {
-  it("accepts exact ISRC and normalized artist/title within duration tolerance", () => {
-    expect(isConservativeSpotifyMatch({
-      name: "Wrong",
-      artists: ["Wrong"],
-      isrc: "abc123",
-      durationMs: null,
-    }, spotifyTrack)).toBe(true);
-    expect(isConservativeSpotifyMatch({
-      name: "A Song ft. Guest",
-      artists: ["the band"],
-      isrc: null,
-      durationMs: 184_000,
-    }, spotifyTrack)).toBe(true);
+describe("Spotify-ID candidate resolution without catalog requests", () => {
+  it("uses the server-validated ID and creates a canonical Spotify link", async () => {
+    const resolved = await resolveRankedCandidatesToSpotify([candidate()], 20);
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0].track).toMatchObject({
+      spotifyId: "1234567890123456789012",
+      spotifyUri: "spotify:track:1234567890123456789012",
+      externalUrl: "https://open.spotify.com/track/1234567890123456789012",
+      imageUrl: null,
+    });
   });
 
-  it("does not collapse distinct live and remix versions", () => {
-    expect(isConservativeSpotifyMatch({
-      name: "A Song (Live)",
-      artists: ["The Band"],
-      isrc: null,
-      durationMs: 180_000,
-    }, { ...spotifyTrack, name: "A Song (Remix)" })).toBe(false);
+  it("drops candidates without a Spotify ID, malformed IDs, and duplicates", async () => {
+    const resolved = await resolveRankedCandidatesToSpotify([
+      candidate({ spotifyId: null }),
+      candidate({ spotifyId: "invalid" }),
+      candidate({ provider: "freqblog" }),
+      candidate(),
+      candidate({ name: "Duplicate recording" }),
+    ], 20);
+    expect(resolved).toHaveLength(1);
   });
 });

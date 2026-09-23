@@ -255,7 +255,7 @@ export function SimilarPlaylistClient({ playlistId }: { playlistId: string }) {
             <li key={track.spotifyId} className="grid grid-cols-[3rem_minmax(0,1fr)_auto] items-center gap-3 rounded-2xl border border-transparent p-2 transition hover:border-[var(--line)] hover:bg-[var(--panel)] sm:grid-cols-[2rem_3.5rem_minmax(0,1fr)_auto_auto] sm:gap-4 sm:px-4">
               <span className="hidden text-right text-sm tabular-nums text-[var(--muted)] sm:block">{index + 1}</span>
               <a href={track.externalUrl} target="_blank" rel="noreferrer" className="overflow-hidden rounded-lg">
-                <Artwork src={track.imageUrl} alt={`${track.album} albüm kapağı`} size={56} className="size-12 rounded-lg sm:size-14" />
+                <Artwork src={track.imageUrl} alt={track.album ? `${track.album} albüm kapağı` : track.name} size={56} className="size-12 rounded-lg sm:size-14" />
               </a>
               <div className="min-w-0">
                 <a href={track.externalUrl} target="_blank" rel="noreferrer" className="block truncate font-semibold hover:underline">{track.name}</a>
