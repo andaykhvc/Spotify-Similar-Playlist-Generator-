@@ -8,7 +8,7 @@ import { RecommendationError } from "@/lib/recommendations/errors";
 import { buildFeatureRecords } from "@/lib/recommendations/features/normalization";
 import { FreqBlogProvider } from "@/lib/recommendations/providers/freqblog";
 import { ReccoBeatsProvider } from "@/lib/recommendations/providers/reccobeats";
-import { ENGINE_LIMITS, RECOMMENDATION_ENGINE_VERSION, STRICTNESS } from "@/lib/recommendations/recommendation-config";
+import { DEFAULT_CONSENSUS_STRICTNESS, ENGINE_LIMITS, RECOMMENDATION_ENGINE_VERSION, STRICTNESS } from "@/lib/recommendations/recommendation-config";
 import { evaluateCandidate, type CandidateEvaluation, type ConsensusStrictness } from "@/lib/recommendations/scoring/candidate-score";
 import { matchLabelForIndex } from "@/lib/recommendations/ranking";
 import { createGenerationToken } from "@/lib/recommendations/token";
@@ -68,7 +68,7 @@ export async function generateSimilarPlaylist(
   playlistId: string,
   desiredCount: PlaylistLength,
   generationVariant: number,
-  strictness: ConsensusStrictness = "balanced",
+  strictness: ConsensusStrictness = DEFAULT_CONSENSUS_STRICTNESS,
   includeDiagnostics = false,
 ): Promise<GenerationResult> {
   const environment = getRecommendationEnvironment();

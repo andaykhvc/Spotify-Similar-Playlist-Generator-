@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { GenerationDiagnostics } from "@/lib/recommendations";
 import type { GeneratedRecommendation, PlaylistLength } from "@/lib/recommendations/types";
 import type { ConsensusStrictness } from "@/lib/recommendations/scoring/candidate-score";
+import { DEFAULT_CONSENSUS_STRICTNESS } from "@/lib/recommendations/recommendation-config";
 
 interface LabResponse {
   diagnostics: GenerationDiagnostics;
@@ -17,7 +18,7 @@ function value(value: number | null | undefined, digits = 2): string {
 export function RecommenderLabClient() {
   const [playlistId, setPlaylistId] = useState("");
   const [length, setLength] = useState<PlaylistLength>(30);
-  const [strictness, setStrictness] = useState<ConsensusStrictness>("balanced");
+  const [strictness, setStrictness] = useState<ConsensusStrictness>(DEFAULT_CONSENSUS_STRICTNESS);
   const [response, setResponse] = useState<LabResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

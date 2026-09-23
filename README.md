@@ -13,7 +13,7 @@ EchoList, Spotify'ın eski “Create Similar Playlist” akışının yararlı k
 - Her müzikal grubun temsilî parçalarından iki sağlayıcıyla aday üretimi ve çapraz sağlayıcı özellik kontrolü
 - Kaynak parça eleme, Spotify ID → ISRC → normalize sanatçı/başlık sıralı deduplikasyon
 - Spotify'da exact ID, ISRC veya konservatif sanatçı/başlık eşlemesi
-- Kaynak grubun yarıçapına göre gerçek Sıkı/Dengeli/Keşif eşikleri; açıklanabilir puan, uydurma yüzde yok
+- Kaynak grubun yarıçapına göre gerçek Yakın/Dengeli/Keşif eşikleri; Yakın başlangıçta seçili, açıklanabilir puan ve uydurma yüzde yok
 - Grup oranlarını koruyan kota dağıtımı, uyarlanabilir sanatçı/albüm sınırı, 20/30/50/100 hedef uzunlukları, parça kaldırma ve gerçek yeniden üretim
 - Yalnızca geliştirme ortamında, oturum gerektiren `/dev/recommender-lab` tanı ekranı
 - Güncel `POST /me/playlists` ve `POST /playlists/{playlist_id}/items` ile yeni liste oluşturma
