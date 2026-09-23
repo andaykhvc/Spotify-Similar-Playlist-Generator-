@@ -1,4 +1,4 @@
-# Recommendation engine · `consensus-v1`
+# Recommendation engine · `consensus-v2`
 
 This document describes the implemented engine, its verified provider capabilities, engineering defaults, and limits. It does not claim that the numerical weights are scientifically optimal or that structural metrics equal human judgments of music quality.
 
@@ -13,10 +13,10 @@ flowchart TD
   F --> G
   G --> H[Consensus clusters and mixture weights]
   H --> I[Medoid seeds per cluster]
-  I --> J[Recco and Freq candidate union]
+  I --> J[Target-audio Recco, source-artist catalogue, and Freq candidate union]
   J --> K[Spotify identity resolution]
   K --> L[Candidate features in both provider spaces]
-  L --> M[Cluster-radius admission and explainable score]
+  L --> M[Nearest-source radius, style-evidence admission, and explainable score]
   M --> N[Quota allocation and diversity]
   N --> O[Preview, removal, new Spotify playlist]
 ```
@@ -42,7 +42,7 @@ The implementation was checked against the current official [ReccoBeats audio-fe
 
 FreqBlog response fields may be sparse for fallback catalogue layers. Its `feature_source` distinguishes analysis provenance. `bpm_confidence` is not treated as 0–1. ReccoBeats key and mode are documented and therefore used. No undocumented Recco genre, mood, Camelot, or time signature values are inferred.
 
-Recommendation endpoints used: ReccoBeats `GET /v1/track/recommendation` with 1–5 Spotify track IDs and `size`; FreqBlog `GET /recommendations` with 1–5 numeric catalogue IDs in `seed_tracks` when `/bulk` resolved them, otherwise one medoid title/artist, plus `limit`, `exclude_seed_artists`, and `cross_genre=auto`. FreqBlog `/similar` and the embedding endpoint are not used. Its documented cosine `score` is retained as provider evidence but is not presented as a user similarity percentage.
+Recommendation endpoints used: ReccoBeats `GET /v1/track/recommendation` with 1–5 Spotify track IDs, `size`, documented target-audio parameters, and `featureWeight`; `GET /v1/track/{id}` and `GET /v1/artist/{id}/track` supply a bounded same-source-artist candidate pool. FreqBlog `GET /recommendations` uses 1–5 numeric catalogue IDs in `seed_tracks` when `/bulk` resolved them, otherwise one medoid title/artist, plus `limit`, `exclude_seed_artists=false`, and `cross_genre=strict` in Yakın mode (`auto` otherwise). FreqBlog `/similar` and the embedding endpoint are not used. Its documented cosine `score` is retained as provider evidence but is not presented as a user similarity percentage.
 
 ## Data flow and canonical record
 
@@ -54,39 +54,40 @@ For 1,000 source tracks the upper bound is 25 Recco feature batches and 40 Freq 
 
 For each provider and continuous feature separately, the engine fits a source-playlist median and IQR. With at least eight observations and nonzero IQR, the scale is `IQR / 1.349`; small or flat samples fall back to a bounded half-range. Candidate values use the **source** scale. Values are clipped to ±4 robust z units for stable distances. Raw values remain available for diagnostics and UI descriptions.
 
-Distance is a weighted mean over dimensions present on **both** tracks. The weights live in [`recommendation-config.ts`](../lib/recommendations/recommendation-config.ts), including provider-specific reliability factors. Missing features are omitted from both numerator and effective denominator. If no dimensions overlap, distance is unknown. Tempo tests a plausible half, same, and double beat grid via a logarithmic BPM ratio. Pitch classes use circular distance; Camelot understands same key, relative major/minor, and adjacent wheel positions. Genre and mood remain categorical or vector-based signals. Genre mismatch is not a hard reject.
+Distance is a weighted mean over dimensions present on **both** tracks. The weights live in [`recommendation-config.ts`](../lib/recommendations/recommendation-config.ts), including provider-specific reliability factors. Missing features are omitted from both numerator and effective denominator. If fewer than 30% of weighted dimensions are comparable, candidate admission treats the view as unavailable. Tempo tests a plausible half, same, and double beat grid via a logarithmic BPM ratio. Pitch classes use circular distance; Camelot understands same key, relative major/minor, and adjacent wheel positions. Genre and mood remain categorical or vector-based signals. A known broad-genre mismatch is now a hard reject for all three modes.
 
 Each provider's analyzable source tracks are clustered **independently** with deterministic k-medoids over that provider's own distance matrix. Medoids work with mixed numeric, circular, categorical, and missing-aware distance, unlike ordinary Euclidean k-means. For at least eight tracks, k is selected from 2 through `min(8, floor(n/4))` by silhouette score with a small complexity penalty. If no split is sufficiently supported, k=1. For 1–3 tracks the engine uses seed mode; 4–7 use one profile. Both modes retain source exclusions.
 
 For tracks available in both providers, the engine builds a co-association matrix: a pair receives the weighted sum of the two providers' same-cluster decisions. A second deterministic medoid clustering over `1 - association` creates consensus clusters; it does **not** compare provider cluster numbers directly. Source tracks with only one provider are attached to their nearest consensus cluster at lower confidence. No-feature tracks remain source exclusions and do not shape clusters. When the dual-provider overlap is too small, the larger available provider view supplies a labelled single-provider fallback; it is not called two-provider consensus.
 
-Each cluster stores source members, mixture weight, up to five medoid indices, provider-specific 75th-percentile radius, coverage, agreement, tempo distribution, medians of documented features, genre/mood distributions, and a description derived from these data. For tiny groups, a documented radius floor prevents one identical source song from making all recommendations impossible. The lab reports provider silhouette, adjusted Rand index, co-association confidence, and coverage.
+Each cluster stores source members, mixture weight, up to five medoid indices, provider-specific 75th-percentile nearest-neighbour radius, coverage, agreement, tempo distribution, medians of documented features, genre/mood distributions, and a description derived from these data. Radius calibration excludes each song's self-distance; a floor of 0.18 (0.24 for groups of at most three) prevents identical/tiny groups from collapsing the admission boundary. The lab reports provider silhouette, adjusted Rand index, co-association confidence, and coverage.
 
 ## Candidate generation, admission and ranking
 
-The engine allocates a target count across source clusters by the largest-remainder method. Each cluster generates its own candidates from rotating medoid subsets: one Recco request and, when configured, one Freq recommendation request. The number of calls is bounded by the cluster limit of eight. A provider failure is local to that provider/cluster; successful batches survive. Candidate lists are a **union**, deduplicated by Spotify ID, ISRC, then normalized artist/title while preserving versions such as remix and live.
+The engine allocates a target count across source clusters by the largest-remainder method. Each cluster generates its own candidates from rotating medoid subsets: one Recco request with Recco-specific cluster-median audio targets, up to three source-artist catalogue lookups, and, when configured, one Freq recommendation request. The number of clusters is capped at eight; artist catalogue lookups are capped at twelve per request (one per cluster when Freq is configured) and request-scoped cached. A provider failure is local to that provider/cluster; successful batches survive. Candidate lists are a **union**, deduplicated by Spotify ID, ISRC, then normalized artist/title while preserving versions such as remix and live.
 
-Candidates are resolved to real Spotify tracks with bounded concurrency and Spotify Search's current 10-result limit. Each unique resolved track is feature-enriched in both configured provider spaces. For each consensus cluster, candidate-to-medoid distances are computed independently, then divided by that cluster's provider-specific source radius. A candidate is accepted according to actual radius thresholds in one of three modes:
+Candidates are resolved to real Spotify tracks with bounded concurrency and Spotify Search's current 10-result limit. Each unique resolved track is feature-enriched in both configured provider spaces. For each consensus cluster, candidate-to-nearest-source-track distances are computed independently, then divided by that cluster's provider-specific leave-one-out radius. A candidate is accepted according to actual radius thresholds in one of three modes:
 
 | Mode | Both view radius ceiling | One view ceiling | Max single-view share when both views exist |
 | --- | ---: | ---: | ---: |
-| Strict | 1.05 | 0.70 | 10% |
-| Balanced | 1.50 | 1.15 | 30% |
-| Exploratory | 2.10 | 1.55 | 45% |
+| Strict | 1.05 | 1.05 | 10% |
+| Balanced | 1.40 | 1.35 | 30% |
+| Exploratory | 1.80 | 1.65 | 45% |
 
 The consumer UI starts in **Strict (Yakın)** mode. It applies the tightest source-cluster boundary and can return fewer tracks when the qualifying pool is small; users can choose Balanced or Exploratory and regenerate. The production API uses the same default if a caller omits the mode.
 
-When only one provider is available, the single-view share cap is relaxed; the radius ceiling still applies. No candidate is accepted with zero comparable views. The strongest acceptable cluster assignment wins. `Regenerate` changes the deterministic medoid subset and bounded candidate request size; it makes new provider requests and can surface next qualifying candidates rather than shuffling old results.
+When only one provider is available, the single-view share cap is relaxed; the radius ceiling and style-evidence gate still apply. A candidate needs either a source-artist match or a matching known genre family. Agreement on audio numbers alone, even across two providers, is deliberately insufficient. No candidate is accepted with zero comparable views. The strongest acceptable cluster assignment wins. `Regenerate` changes the deterministic medoid subset and bounded candidate request size; it makes new provider requests and can surface next qualifying candidates rather than shuffling old results.
 
 The explainable score is:
 
 ```text
-0.58 × cluster fit
-+ 0.20 × agreement of provider-relative cluster distances
-+ 0.09 × generation evidence (seed cluster, rank, independent providers)
-+ 0.05 × broad genre fit
-+ 0.04 × mood fit
-+ 0.04 × harmonic fit
+0.53 × cluster fit
++ 0.12 × agreement of provider-relative cluster distances
++ 0.07 × generation evidence (seed cluster, rank, independent providers, source-artist catalogue)
++ 0.08 × broad genre fit
++ 0.02 × mood fit
++ 0.02 × harmonic fit
++ 0.16 × source-artist fit
 ```
 
 These are tunable defaults, not calibrated similarity probabilities. Every candidate has component scores, provenance, distances, acceptance status and rejection reason in development diagnostics. The product displays a short rule-derived explanation and ordinal labels, never a fabricated percentage.
@@ -97,7 +98,7 @@ The final selection first fills each cluster's target quota with accepted candid
 
 The `RequestFeatureCache` key is `(provider, schema version, stable track identifier)` and lives only for one generation request. It does not contain a Spotify user ID or playlist ID, and there is no persistent database. Recco lookups use at most 40 IDs per call; Freq bulk requests use 25 items, below the documented 50-item maximum to reduce partial time-box responses. Feature batch concurrency is at most two; Freq candidate and Recco candidate calls are bounded by eight clusters. Provider 429 honors `Retry-After` with at most one short automatic retry; subsequent batches stop on quota errors. Freq `202`, queued, and processing entries are treated as pending without indefinite polling.
 
-`EXTERNAL_RECOMMENDER_ENABLED=false` stops the pipeline before any provider transfer. Turning it on requires the deployment operator's own Spotify policy and provider data-processing review. FreqBlog is optional: without a key, the engine runs a transparently labelled Recco-only view. The engine does not train a model, scrape Spotify audio, store listening profiles, or claim to recreate Spotify's historical algorithm.
+`EXTERNAL_RECOMMENDER_ENABLED=false` stops the pipeline before any provider transfer. Turning it on requires the deployment operator's own Spotify policy and provider data-processing review. FreqBlog is optional: without a key, genre metadata is usually absent and the engine conservatively favors tracks from source artists, so a result may be shorter or less varied. The engine does not train a model, scrape Spotify audio, store listening profiles, or claim to recreate Spotify's historical algorithm.
 
 The interactive safety limit is 1,000 usable source tracks and 240 unique candidates per request. Catalogue coverage, FreqBlog free-tier quota, source cluster tightness, and Spotify Search ambiguity can all reduce result count. The metrics are engineering diagnostics rather than subjective quality scores.
 
@@ -105,4 +106,4 @@ The interactive safety limit is 1,000 usable source tracks and 240 unique candid
 
 With a connected Spotify session in `next dev`, visit `/dev/recommender-lab` and provide a playlist ID. This route and its API return 404 in production. The lab shows source raw values and missingness, provider and consensus assignments, medoids, feature coverage, candidate provenance, distances, score components, rejections, and result mixture. It makes real provider calls only when the external recommender feature flag is on. Never use a real network call in automated unit tests.
 
-Useful parameters to tune after real playlist listening tests are the feature weights, provider reliability, cluster-count penalty, radius floors, strictness ceilings, candidate pool size, and artist concentration adjustment. The current engine version is `consensus-v1`; change it whenever a scoring or clustering contract changes so diagnostics from different versions are not conflated.
+Useful parameters to tune after real playlist listening tests are the feature weights, provider reliability, cluster-count penalty, radius floors, strictness ceilings, candidate pool size, and artist concentration adjustment. The current engine version is `consensus-v2`; change it whenever a scoring or clustering contract changes so diagnostics from different versions are not conflated.

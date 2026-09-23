@@ -1,5 +1,6 @@
 import { featureDistance } from "@/lib/recommendations/features/distance";
 import { genreDistance } from "@/lib/recommendations/features/genre";
+import { normalizeTrackText } from "@/lib/recommendations/dedupe";
 import { normalizeProviderFeatures, type ProviderScales } from "@/lib/recommendations/features/normalization";
 import type { ProviderFeatures, ProviderFeatureView } from "@/lib/recommendations/features/types";
 import type { CandidateEvidence } from "@/lib/recommendations/engine/candidate-generator";
@@ -17,6 +18,7 @@ export interface CandidateScoreComponents {
   genreFit: number;
   moodFit: number;
   harmonicFit: number;
+  artistFit: number;
 }
 
 export interface CandidateEvaluation {
@@ -35,15 +37,16 @@ export interface CandidateEvaluation {
   singleView: boolean;
 }
 
-function nearestMedoid(
+function nearestSourceTrack(
   candidate: ProviderFeatureView | null,
   cluster: ConsensusCluster,
   profile: PlaylistProfile,
   provider: ProviderName,
 ): { distance: number | null; components: ReturnType<typeof featureDistance>["components"] } {
-  const matches = cluster.providerMedoidIndices[provider]
+  const matches = cluster.memberIndices
     .map((index) => featureDistance(candidate, profile.records[index][provider], provider))
-    .filter((result) => result.value !== null)
+    // A single shared field is not enough evidence to call two songs similar.
+    .filter((result) => result.value !== null && result.coverage >= 0.3)
     .sort((a, b) => a.value! - b.value!);
   return { distance: matches[0]?.value ?? null, components: matches[0]?.components ?? {} };
 }
@@ -60,8 +63,8 @@ export function scoreCandidateForCluster(
 ): CandidateEvaluation {
   const recco = rawRecco ? normalizeProviderFeatures(rawRecco, scales.reccobeats) : null;
   const freq = rawFreq ? normalizeProviderFeatures(rawFreq, scales.freqblog) : null;
-  const reccoFit = nearestMedoid(recco, cluster, profile, "reccobeats");
-  const freqFit = nearestMedoid(freq, cluster, profile, "freqblog");
+  const reccoFit = nearestSourceTrack(recco, cluster, profile, "reccobeats");
+  const freqFit = nearestSourceTrack(freq, cluster, profile, "freqblog");
   const reccoRadiusRatio = reccoFit.distance === null || cluster.reccoRadius === null
     ? null : reccoFit.distance / cluster.reccoRadius;
   const freqRadiusRatio = freqFit.distance === null || cluster.freqRadius === null
@@ -70,9 +73,23 @@ export function scoreCandidateForCluster(
   const singleView = ratios.length === 1;
   const thresholds = STRICTNESS[strictness];
   const maxRatio = singleView ? thresholds.oneRadius : thresholds.bothRadius;
-  const accepted = ratios.length > 0 && ratios.every((value) => value <= maxRatio);
+  const sourceArtists = new Set(cluster.memberIndices.flatMap((index) =>
+    profile.records[index].identity.artists.map(normalizeTrackText)));
+  const artistMatch = track.artists.some((artist) => sourceArtists.has(normalizeTrackText(artist)));
+  const genreDistances = cluster.memberIndices.map((index) =>
+    genreDistance(rawFreq?.genre ?? null, profile.records[index].canonical.genre))
+    .filter((distance): distance is number => distance !== null);
+  const genreDistanceValue = genreDistances.length ? Math.min(...genreDistances) : null;
+  const genreMismatch = genreDistanceValue === 1;
+  // Even two audio-feature providers can agree on an off-genre song. Require
+  // positive artist or genre evidence in addition to acoustic proximity.
+  const hasStyleEvidence = artistMatch || (genreDistanceValue !== null && genreDistanceValue < 1);
+  const accepted = ratios.length > 0 && ratios.every((value) => value <= maxRatio) &&
+    !genreMismatch && hasStyleEvidence;
   const rejectionReason = ratios.length === 0 ? "no comparable feature view"
-    : accepted ? null : "outside source cluster radius";
+    : genreMismatch ? "different genre family"
+      : !hasStyleEvidence ? "no reliable style evidence"
+        : accepted ? null : "outside source cluster radius";
   const ratioMean = ratios.length ? ratios.reduce((sum, value) => sum + value, 0) / ratios.length : Infinity;
   const clusterFit = Number.isFinite(ratioMean) ? 1 / (1 + ratioMean) : 0;
   const providerAgreement = ratios.length === 2
@@ -81,8 +98,8 @@ export function scoreCandidateForCluster(
   const generationEvidence = Math.min(1,
     0.45 + (candidate.generatedBy.length - 1) * 0.3 +
     (candidate.seedClusterIds.includes(cluster.id) ? 0.15 : 0) +
+    (candidate.sourceArtistCatalog ? 0.1 : 0) +
     Math.max(0, 10 - Math.min(...Object.values(candidate.providerRanks))) / 100);
-  const genreDistanceValue = genreDistance(rawFreq?.genre ?? null, cluster.dominantGenre);
   const genreFit = genreDistanceValue === null ? 0 : 1 - genreDistanceValue;
   const moodFit = rawFreq?.mood && cluster.dominantMood
     ? Number(rawFreq.mood.toLowerCase() === cluster.dominantMood.toLowerCase()) : 0;
@@ -90,10 +107,12 @@ export function scoreCandidateForCluster(
   const harmonicFit = harmonic === undefined ? 0 : 1 - harmonic;
   const components = {
     clusterFit, providerAgreement, generationEvidence, genreFit, moodFit, harmonicFit,
+    artistFit: artistMatch ? 1 : 0,
   };
   const score = Object.entries(RANKING_WEIGHTS).reduce((sum, [key, weight]) =>
     sum + weight * components[key as keyof CandidateScoreComponents], 0);
   const reasons = [
+    artistMatch ? "Kaynak listedeki sanatçıdan yeni parça" : null,
     (reccoFit.components.tempo !== undefined && reccoFit.components.tempo < 0.3) ||
       (freqFit.components.tempo !== undefined && freqFit.components.tempo < 0.3)
       ? "Kaynak grupla yakın tempo" : null,

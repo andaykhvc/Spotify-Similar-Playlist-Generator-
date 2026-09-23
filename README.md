@@ -10,7 +10,7 @@ EchoList, Spotify'ın eski “Create Similar Playlist” akışının yararlı k
 - Hesaptan seçim veya Spotify playlist URL/ID yapıştırma
 - Her kullanılabilir kaynak parça için ReccoBeats ve opsiyonel FreqBlog ses özelliği sorgusu
 - Sağlayıcı başına ayrı normalizasyon ve deterministik medoid kümeleme; iki görünümden co-association uzlaşması
-- Her müzikal grubun temsilî parçalarından iki sağlayıcıyla aday üretimi ve çapraz sağlayıcı özellik kontrolü
+- Her müzikal grubun temsilî parçalarından hedef ses özellikli aday üretimi, kaynak sanatçı kataloğu ve çapraz sağlayıcı özellik kontrolü
 - Kaynak parça eleme, Spotify ID → ISRC → normalize sanatçı/başlık sıralı deduplikasyon
 - Spotify'da exact ID, ISRC veya konservatif sanatçı/başlık eşlemesi
 - Kaynak grubun yarıçapına göre gerçek Yakın/Dengeli/Keşif eşikleri; Yakın başlangıçta seçili, açıklanabilir puan ve uydurma yüzde yok
@@ -53,7 +53,7 @@ Spotify metadata'sı ve sağlayıcı sonuçları tek istek boyunca bellekte işl
 
 Kaynak parçalar tekilleştirilir ve tamamı için mevcut sağlayıcılardan özellik istenir. ReccoBeats ve FreqBlog değerleri birbirine ham olarak eklenmez veya ortalanmaz. Her sağlayıcı kendi medyan/IQR ölçeğinde ve eksik değeri açıkça koruyarak deterministik k-medoids ile gruplanır. İki kümelemenin parça çiftleri hakkındaki uzlaşması müzikal grupları oluşturur. FreqBlog yoksa veya örtüşme azsa tek-sağlayıcı fallback'i açıkça işaretlenir.
 
-Her grubun medoid parçalarıyla sınırlı sayıda sağlayıcı isteği yapılır. Birleşik aday havuzu Spotify'da doğrulanır, iki sağlayıcı görünümünde tekrar zenginleştirilir ve grubun kendi kaynak-parça yarıçapıyla karşılaştırılır. Uygun parçalar grup uyumu, sağlayıcı uzlaşması ve sınırlı tür/ruh hâli/armoni sinyalleriyle sıralanır; kaynak gruplarının oranları ve sanatçı çeşitliliği korunmaya çalışılır. “Yeniden oluştur” medoid alt kümesini ve aday isteğini değiştirir; eski diziyi yalnızca karıştırmaz. Yetersiz kaliteli aday varsa istenen sayıdan az sonuç dönebilir. Ayrıntılar: [öneri motoru teknik belgesi](docs/recommendation-engine.md).
+Her grubun temsilî parçaları ve grubun medyan ses özellikleriyle sınırlı sayıda sağlayıcı isteği yapılır. ReccoBeats'teki kaynak sanatçıların diğer parçaları da aday havuzuna katılır. Birleşik havuz Spotify'da doğrulanır, sağlayıcı görünümünde tekrar zenginleştirilir ve grubun gerçek kaynak parçalarıyla karşılaştırılır. Kabul için aynı kaynak sanatçı veya eşleşen tür ailesi kanıtı gerekir; tür ailesi açıkça uyuşmuyorsa parça elenir. Böylece sırf tempo/enerji yakın diye alakasız türlerden şarkı eklenmez. “Yeniden oluştur” seed alt kümesini ve aday isteğini değiştirir. Yeterince güvenilir aday yoksa istenen sayıdan az sonuç döner; kaliteyi düşürüp listeyi zorla doldurmaz. Bu Spotify'ın özel öneri algoritmasının aynısı değildir. Ayrıntılar: [öneri motoru teknik belgesi](docs/recommendation-engine.md).
 
 ## Harici sağlayıcı ve Spotify politika sınırı
 
@@ -63,14 +63,16 @@ Değeri `true` yapmak tek başına Spotify politikalarına uygunluk garantisi de
 
 Kullanılan harici endpoint'ler:
 
-- ReccoBeats: `GET https://api.reccobeats.com/v1/audio-features` ve `GET /v1/track/recommendation`
-  - Özellik sorguları en çok 40 ID'lik batch'ler; grup başına 1–5 Spotify Base-62 medoid seed ID ve sınırlı `size`
+- ReccoBeats: `GET https://api.reccobeats.com/v1/audio-features`, `GET /v1/track/recommendation`, `GET /v1/track/{id}` ve `GET /v1/artist/{id}/track`
+  - Özellik sorguları en çok 40 ID'lik batch'ler; grup başına 1–5 Spotify Base-62 medoid seed ID, medyan özellik hedefleri ve grup başına en çok üç kaynak sanatçı kataloğu sorgusu (istek genelinde en çok 12)
   - HTTP 429'da `Retry-After` gözetilir; en fazla bir kısa otomatik tekrar yapılır
 - FreqBlog (yalnızca `FREQBLOG_API_KEY` varsa): `POST https://api.freqblog.com/bulk` ve `GET /recommendations`
   - Özellik sorguları en çok 25'lik batch'ler; çözümlenmiş katalog ID'leri varsa grup başına en çok 5 seed
   - `202`/backfill bekleyen parçalar kullanılabilir diğer verilerle devam eder; `/similar` kullanılmaz
 
 FreqBlog başarısız olsa bile ReccoBeats sonucu kullanılabilir. ReccoBeats başarısız olur ve FreqBlog kullanılabilir durumdaysa FreqBlog fallback olabilir. İki sağlayıcı da başarısızsa kullanıcıya geçici servis hatası gösterilir.
+
+`FREQBLOG_API_KEY` olmadan tür verisi genellikle bulunmaz. Bu durumda kalite koruması için özellikle kaynak sanatçıların henüz listede olmayan şarkılarına öncelik verilir; farklı sanatçılar arasındaki keşif daha sınırlı ve sonuç listesi daha kısa olabilir. Anahtar eklemek tür bilgisi ve ikinci bağımsız özellik görünümü sağlar, fakat tek başına Spotify düzeyinde sonuç garantisi vermez. Harici servis kotaları ve veri kapsaması da sonucu etkiler.
 
 ## Spotify Developer Dashboard kurulumu
 

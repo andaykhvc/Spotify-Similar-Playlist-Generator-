@@ -13,6 +13,7 @@ import type {
 
 const BASE_URL = "https://api.reccobeats.com";
 const SPOTIFY_TRACK_ID = /^[A-Za-z0-9]{22}$/;
+const RECCO_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type UnknownRecord = Record<string, unknown>;
 function record(value: unknown): UnknownRecord | null {
@@ -34,7 +35,7 @@ function spotifyIdFromHref(href: string | null): string | null {
   }
 }
 
-function parseResponse(value: unknown, seedGroupIndex: number): RecommendationCandidate[] {
+function parseResponse(value: unknown, seedGroupIndex: number, origin: "recommendation" | "source-artist" = "recommendation"): RecommendationCandidate[] {
   const root = record(value);
   if (!root || !Array.isArray(root.content)) {
     throw new ProviderError("ReccoBeats returned an invalid response", "reccobeats", 502);
@@ -65,6 +66,7 @@ function parseResponse(value: unknown, seedGroupIndex: number): RecommendationCa
       providerRank: index + 1,
       providerScore: null,
       seedGroupIndex,
+      origin,
     }];
   });
 }
@@ -99,6 +101,7 @@ export class ReccoBeatsProvider implements RecommendationProvider, FeatureLookup
   readonly name = "reccobeats" as const;
   private readonly featureCache = new RequestFeatureCache();
   private readonly schemaVersion = "v1-audio-features";
+  private readonly artistTrackCache = new Map<string, Promise<RecommendationCandidate[]>>();
   lastFeatureError: ProviderError | null = null;
   constructor(private readonly fetcher: typeof fetch = fetch) {}
 
@@ -146,14 +149,68 @@ export class ReccoBeatsProvider implements RecommendationProvider, FeatureLookup
       const url = new URL("/v1/track/recommendation", BASE_URL);
       url.searchParams.set("size", String(perGroup));
       group.forEach((track) => url.searchParams.append("seeds", track.spotifyId));
-      const body = await fetchProviderJson(
-        this.name,
-        url,
-        { headers: { Accept: "application/json" } },
-        this.fetcher,
+      for (const [field, value] of Object.entries(request.featureTargets ?? {})) {
+        if (value !== null && Number.isFinite(value)) url.searchParams.set(field, String(value));
+      }
+      if (request.featureTargets) url.searchParams.set("featureWeight", request.strictness === "strict" ? "5" : "4");
+      const recommendation = fetchProviderJson(
+        this.name, url, { headers: { Accept: "application/json" } }, this.fetcher,
       );
-      return parseResponse(body, index);
+      const catalog = request.includeSourceArtistCatalog
+        ? this.sourceArtistTracks(group, index, perGroup, request.sourceArtistLimit ?? 1) : Promise.resolve([]);
+      const [recommended, sameArtist] = await Promise.allSettled([recommendation, catalog]);
+      const catalogCandidates = sameArtist.status === "fulfilled" ? sameArtist.value : [];
+      if (recommended.status === "rejected" && catalogCandidates.length === 0) throw recommended.reason;
+      let recommendedCandidates: RecommendationCandidate[] = [];
+      if (recommended.status === "fulfilled") {
+        try {
+          recommendedCandidates = parseResponse(recommended.value, index);
+        } catch (error) {
+          if (catalogCandidates.length === 0) throw error;
+        }
+      }
+      return [
+        ...recommendedCandidates,
+        ...catalogCandidates,
+      ];
     });
     return pages.flat();
+  }
+
+  private async sourceArtistTracks(
+    group: NormalizedTrack[], seedGroupIndex: number, limit: number, artistLimit: number,
+  ): Promise<RecommendationCandidate[]> {
+    const trackIds = [...new Set(group.map((track) =>
+      this.featureCache.get(this.name, this.schemaVersion, track.spotifyId)?.providerTrackId)
+      .filter((id): id is string => typeof id === "string" && RECCO_ID.test(id)))].slice(0, Math.min(3, Math.max(1, artistLimit)));
+    const details = await mapWithConcurrency(trackIds, 2, async (trackId) => {
+      try {
+        const trackUrl = new URL(`/v1/track/${trackId}`, BASE_URL);
+        return record(await fetchProviderJson(this.name, trackUrl,
+          { headers: { Accept: "application/json" } }, this.fetcher));
+      } catch { return null; }
+    });
+    const artistIds = [...new Set(details.flatMap((detail) => Array.isArray(detail?.artists)
+      ? detail.artists.map((artist) => stringValue(record(artist)?.id)) : [])
+      .filter((id): id is string => typeof id === "string" && RECCO_ID.test(id)))].slice(0, Math.min(3, Math.max(1, artistLimit)));
+    const pages = await mapWithConcurrency(artistIds, 2, async (artistId) => {
+      try {
+        return await this.artistTracks(artistId, limit);
+      } catch { return []; }
+    });
+    return pages.flat().map((candidate) => ({ ...candidate, seedGroupIndex }));
+  }
+
+  private artistTracks(artistId: string, limit: number): Promise<RecommendationCandidate[]> {
+    const cached = this.artistTrackCache.get(artistId);
+    if (cached) return cached;
+    const artistUrl = new URL(`/v1/artist/${artistId}/track`, BASE_URL);
+    artistUrl.searchParams.set("page", "0");
+    artistUrl.searchParams.set("size", String(Math.min(50, Math.max(20, limit))));
+    const tracks = fetchProviderJson(this.name, artistUrl,
+      { headers: { Accept: "application/json" } }, this.fetcher)
+      .then((payload) => parseResponse(payload, 0, "source-artist"));
+    this.artistTrackCache.set(artistId, tracks);
+    return tracks;
   }
 }

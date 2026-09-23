@@ -117,15 +117,16 @@ function clusterDescription(genre: string | null, energy: number | null, tempo: 
 function clusterRadius(
   records: TrackFeatureRecord[],
   members: number[],
-  medoids: number[],
   provider: ProviderName,
 ): number | null {
-  const distances = members.map((index) => medoids.map((medoid) =>
-    featureDistance(records[index][provider], records[medoid][provider], provider).value)
+  // Leave-one-out neighbours describe the spread of real source songs. Including
+  // the source song itself (often a medoid) made the radius collapse to zero.
+  const distances = members.map((index) => members.filter((other) => other !== index).map((other) =>
+    featureDistance(records[index][provider], records[other][provider], provider).value)
     .filter((value): value is number => value !== null).sort((a, b) => a - b)[0])
     .filter((value): value is number => value !== undefined);
-  const smallSampleFloor = members.length <= 3 ? 0.24 : members.length <= 7 ? 0.16 : 0.08;
-  return distances.length ? Math.max(smallSampleFloor, quantile(distances, 0.75)) : null;
+  const smallSampleFloor = members.length <= 3 ? 0.24 : 0.18;
+  return Math.max(smallSampleFloor, distances.length ? quantile(distances, 0.75) : 0);
 }
 
 function providerMedoids(records: TrackFeatureRecord[], members: number[], provider: ProviderName): number[] {
@@ -203,9 +204,9 @@ export function buildPlaylistProfile(records: TrackFeatureRecord[]): PlaylistPro
       id, memberIndices: members, weight: members.length / Math.max(1, assignedCount),
       medoidIndices, providerMedoidIndices,
       reccoRadius: providerMedoidIndices.reccobeats.length
-        ? clusterRadius(records, members, providerMedoidIndices.reccobeats, "reccobeats") : null,
+        ? clusterRadius(records, members, "reccobeats") : null,
       freqRadius: providerMedoidIndices.freqblog.length
-        ? clusterRadius(records, members, providerMedoidIndices.freqblog, "freqblog") : null,
+        ? clusterRadius(records, members, "freqblog") : null,
       providerAgreement: median(members.map((index) => confidence.get(index) ?? 0)) ?? 0,
       featureCoverage: median(members.map((index) => Math.max(records[index].confidence.reccobeats, records[index].confidence.freqblog))) ?? 0,
       medianTempo,

@@ -56,14 +56,17 @@ describe("cluster candidate engine", () => {
 
   it("regeneration rotates medoid seeds deterministically and changes the provider request", async () => {
     const source = Array.from({ length: 5 }, (_, index) => track(index));
-    const features = new Map(source.map((item) => [item.spotifyId, raw()]));
-    const profile = buildPlaylistProfile(buildFeatureRecords(source, features, features).records);
+    const reccoFeatures = new Map(source.map((item) => [item.spotifyId, raw({ tempo: 120 })]));
+    const freqFeatures = new Map(source.map((item) => [item.spotifyId, raw({ tempo: 200 })]));
+    const profile = buildPlaylistProfile(buildFeatureRecords(source, reccoFeatures, freqFeatures).records);
     profile.clusters[0].medoidIndices = [0, 1, 2, 3, 4];
     const calls: string[][] = [];
+    const targets: (number | null | undefined)[] = [];
     const provider: RecommendationProvider = {
       name: "reccobeats",
       async recommend(request) {
         calls.push(request.seedGroups[0].map((item) => item.spotifyId));
+        targets.push(request.featureTargets?.tempo);
         return [];
       },
     };
@@ -72,11 +75,12 @@ describe("cluster candidate engine", () => {
     await generateClusterCandidates(profile, [provider], 30, 1);
     expect(calls[0]).not.toEqual(calls[1]);
     expect(calls[1]).toEqual(calls[2]);
+    expect(targets).toEqual([120, 120, 120]);
   });
 
   it("favors a dual-view fit and rejects strong cross-provider disagreement", () => {
     const source = track(1);
-    const base = raw();
+    const base = raw({ genre: "rock" });
     const { records } = buildFeatureRecords([source],
       new Map([[source.spotifyId, base]]), new Map([[source.spotifyId, base]]));
     const profile = buildPlaylistProfile(records);
@@ -88,12 +92,12 @@ describe("cluster candidate engine", () => {
       freqblog: fitProviderScales([base]),
     };
     const evidence = unionCandidateEvidence([{ candidate: candidate(), clusterId: 0, seedTrackIds: [source.spotifyId] }])[0];
-    const near = scoreCandidateForCluster(track(100), evidence, raw(), raw(), scales, profile, cluster, "strict");
+    const near = scoreCandidateForCluster(track(100), evidence, raw(), raw({ genre: "rock" }), scales, profile, cluster, "strict");
     const disagrees = scoreCandidateForCluster(track(100), evidence, raw(),
-      raw({ tempo: 175, energy: 0.95, danceability: 0.95, valence: 0.95 }), scales, profile, cluster, "strict");
+      raw({ tempo: 175, energy: 0.95, danceability: 0.95, valence: 0.95, genre: "rock" }), scales, profile, cluster, "strict");
     const moderate = scoreCandidateForCluster(track(100), evidence,
-      raw({ energy: 0.6, danceability: 0.6, valence: 0.6 }),
-      raw({ energy: 0.6, danceability: 0.6, valence: 0.6 }),
+      raw({ energy: 0.6, danceability: 0.6, valence: 0.6, genre: "rock" }),
+      raw({ energy: 0.6, danceability: 0.6, valence: 0.6, genre: "rock" }),
       scales, profile, cluster, "balanced");
     const moderateStrict = scoreCandidateForCluster(track(100), evidence,
       raw({ energy: 0.6, danceability: 0.6, valence: 0.6 }),
@@ -105,6 +109,63 @@ describe("cluster candidate engine", () => {
     expect(moderateStrict.accepted).toBe(false);
     expect(near.score).toBeGreaterThan(moderate.score);
     expect(moderate.components.providerAgreement).toBeGreaterThan(0.9);
+  });
+
+  it("keeps close same-artist songs but rejects genre-unknown strangers with one provider", () => {
+    const source = track(1, "Muse");
+    const base = raw({ tempo: 135, energy: 0.8 });
+    const { records, scales } = buildFeatureRecords([source],
+      new Map([[source.spotifyId, base]]), new Map());
+    const profile = buildPlaylistProfile(records);
+    const evidence = unionCandidateEvidence([{ candidate: candidate(), clusterId: 0,
+      seedTrackIds: [source.spotifyId] }])[0];
+    const close = raw({ tempo: 136, energy: 0.78 });
+    const sameArtist = scoreCandidateForCluster(track(100, "Muse"), evidence, close, null,
+      scales, profile, profile.clusters[0], "strict");
+    const unrelated = scoreCandidateForCluster(track(100, "Unrelated Artist"), evidence, close, null,
+      scales, profile, profile.clusters[0], "exploratory");
+    expect(sameArtist.accepted).toBe(true);
+    expect(sameArtist.reasons).toContain("Kaynak listedeki sanatçıdan yeni parça");
+    expect(unrelated.accepted).toBe(false);
+    expect(unrelated.rejectionReason).toBe("no reliable style evidence");
+  });
+
+  it("rejects an unrelated genre family even when audio features are identical", () => {
+    const source = track(1, "Muse");
+    const sourceRecco = raw();
+    const sourceFreq = raw({ genre: "rock" });
+    const { records, scales } = buildFeatureRecords([source],
+      new Map([[source.spotifyId, sourceRecco]]),
+      new Map([[source.spotifyId, sourceFreq]]));
+    const profile = buildPlaylistProfile(records);
+    const evidence = unionCandidateEvidence([{ candidate: candidate(), clusterId: 0,
+      seedTrackIds: [source.spotifyId] }])[0];
+    const wrongGenre = scoreCandidateForCluster(track(100), evidence, sourceRecco,
+      raw({ genre: "hip hop" }), scales, profile, profile.clusters[0], "exploratory");
+    expect(wrongGenre.accepted).toBe(false);
+    expect(wrongGenre.rejectionReason).toBe("different genre family");
+  });
+
+  it("keeps a minority source genre eligible in a mixed small playlist", () => {
+    const sources = [track(1, "Rock Artist"), track(2, "Pop Artist")];
+    const recco = new Map(sources.map((item) => [item.spotifyId, raw()]));
+    const freq = new Map(sources.map((item, index) => [item.spotifyId,
+      raw({ genre: index === 0 ? "rock" : "pop" })]));
+    const { records, scales } = buildFeatureRecords(sources, recco, freq);
+    const profile = buildPlaylistProfile(records);
+    const evidence = unionCandidateEvidence([{ candidate: candidate(), clusterId: 0,
+      seedTrackIds: [sources[0].spotifyId] }])[0];
+    const evaluation = scoreCandidateForCluster(track(100), evidence, raw(),
+      raw({ genre: "pop" }), scales, profile, profile.clusters[0], "strict");
+    expect(evaluation.accepted).toBe(true);
+  });
+
+  it("calibrates the source radius from different songs, not self-distance", () => {
+    const source = Array.from({ length: 9 }, (_, index) => track(index, "Muse"));
+    const features = new Map(source.map((item, index) => [item.spotifyId,
+      raw({ tempo: 120 + index, energy: 0.5 + index * 0.01 })]));
+    const profile = buildPlaylistProfile(buildFeatureRecords(source, features, new Map()).records);
+    expect(profile.clusters.every((cluster) => cluster.reccoRadius === null || cluster.reccoRadius >= 0.18)).toBe(true);
   });
 
   it("allocates exactly the target length and relaxes quotas only for qualifying tracks", () => {
