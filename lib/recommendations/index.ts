@@ -121,7 +121,9 @@ export async function generateSimilarPlaylist(
   if (profile.clusters.length === 0) {
     throw new RecommendationError("Bu listenin müzikal grupları belirlenemedi.", 422, "no_matches");
   }
-  const providers = freq ? [recco, freq] : [recco];
+  // FreqBlog enriches source/candidate features, but its catalogue returns
+  // iTunes IDs rather than Spotify IDs. Do not search Spotify for each result.
+  const providers = [recco];
   const pool = await generateClusterCandidates(profile, providers, desiredCount, generationVariant, strictness);
   console.info("[recommendations] candidate_generation", {
     clusterCount: profile.clusters.length,
@@ -147,7 +149,7 @@ export async function generateSimilarPlaylist(
   const allowed = new Set(sourceSafe.map((item) => item.spotifyId));
   const safeResolved = resolved.filter((item) => allowed.has(item.track.spotifyId));
   if (safeResolved.length === 0) {
-    throw new RecommendationError("Öneriler Spotify parçalarıyla güvenli biçimde eşleştirilemedi.", 422, "no_matches");
+    throw new RecommendationError("Spotify kimliği olan uygun öneri bulunamadı.", 422, "no_matches");
   }
 
   const candidateTracks = safeResolved.map((item) => item.track);

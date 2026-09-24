@@ -55,14 +55,14 @@ export function selectAllocatedCandidates<T extends AllocatableCandidate<Normali
 
   function take(item: T, enforceCap: boolean): boolean {
     const artist = normalizeTrackText(item.track.artists[0] ?? "");
-    const album = `${artist}:${normalizeTrackText(item.track.album)}`;
+    const album = item.track.album ? `${artist}:${normalizeTrackText(item.track.album)}` : null;
     if (ids.has(item.track.spotifyId) || (item.singleView && singleViewCount >= maxSingle)) return false;
-    if (enforceCap && ((byArtist.get(artist) ?? 0) >= artistCap || (byAlbum.get(album) ?? 0) >= Math.max(2, artistCap))) return false;
+    if (enforceCap && ((byArtist.get(artist) ?? 0) >= artistCap || (album !== null && (byAlbum.get(album) ?? 0) >= Math.max(2, artistCap)))) return false;
     selected.push(item);
     ids.add(item.track.spotifyId);
     byCluster.set(item.clusterId, (byCluster.get(item.clusterId) ?? 0) + 1);
     byArtist.set(artist, (byArtist.get(artist) ?? 0) + 1);
-    byAlbum.set(album, (byAlbum.get(album) ?? 0) + 1);
+    if (album !== null) byAlbum.set(album, (byAlbum.get(album) ?? 0) + 1);
     if (item.singleView) singleViewCount += 1;
     return true;
   }
